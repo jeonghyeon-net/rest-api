@@ -5,7 +5,9 @@
 # 실행 순서:
 #   1. gofmt     - 코드 포맷 자동 수정 + 재스테이징
 #   2. golangci-lint - 정적 분석 + 자동 수정 가능한 린트 이슈 수정 + 재스테이징
-#   3. make arch - DDD 아키텍처 규칙 검증
+#
+# 참고: 빌드 검증(make build)과 아키텍처 규칙 검증(make arch)은
+#       pre-push 훅에서 실행된다. (push 전에 한 번만 검증하여 커밋 속도를 높인다)
 #
 # 이 훅은 .githooks/ 디렉토리에 저장되어 git으로 버전 관리된다.
 # 활성화하려면: make setup (git config core.hooksPath .githooks 실행)
@@ -13,7 +15,7 @@
 # --- 1단계: gofmt (코드 포맷 자동 수정) ---
 # gofmt -w: 포맷이 맞지 않는 파일을 자동으로 수정한다.
 # 수정된 파일은 git add로 스테이징 영역에 다시 추가한다.
-echo "🔍 [1/3] 코드 포맷 검사 및 자동 수정 중... (gofmt)"
+echo "🔍 [1/2] 코드 포맷 검사 및 자동 수정 중... (gofmt)"
 
 # 스테이징된 .go 파일만 대상으로 한다.
 # git diff --cached: 스테이징 영역에 있는 변경 파일 목록
@@ -37,12 +39,12 @@ if [ -n "$STAGED_GO_FILES" ]; then
     fi
 fi
 
-echo "✅ [1/3] 코드 포맷 검사 통과"
+echo "✅ [1/2] 코드 포맷 검사 통과"
 
 # --- 2단계: golangci-lint (정적 분석 + 자동 수정) ---
 # --fix: 자동 수정이 가능한 린트 이슈(unused import, 정렬 등)를 자동으로 고친다.
 # 자동 수정이 불가능한 이슈가 남아 있으면 실패하여 커밋이 차단된다.
-echo "🔍 [2/3] 린트 검사 및 자동 수정 중... (golangci-lint --fix)"
+echo "🔍 [2/2] 린트 검사 및 자동 수정 중... (golangci-lint --fix)"
 
 golangci-lint run --fix
 if [ $? -ne 0 ]; then
@@ -57,20 +59,7 @@ if [ -n "$STAGED_GO_FILES" ]; then
     echo "$STAGED_GO_FILES" | xargs git add
 fi
 
-echo "✅ [2/3] 린트 검사 통과"
-
-# --- 3단계: make arch (아키텍처 규칙 검증) ---
-echo "🔍 [3/3] 아키텍처 규칙 검증 중... (make arch)"
-
-make arch
-if [ $? -ne 0 ]; then
-    echo ""
-    echo "❌ 아키텍처 규칙 위반이 발견되어 커밋이 차단되었습니다."
-    echo "   위반 내용을 수정한 후 다시 커밋해 주세요."
-    exit 1
-fi
-
-echo "✅ [3/3] 아키텍처 규칙 검증 통과"
+echo "✅ [2/2] 린트 검사 통과"
 echo ""
 echo "✅ 모든 검사 통과! 커밋을 진행합니다."
 exit 0
