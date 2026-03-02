@@ -22,6 +22,7 @@ import (
 	"go.uber.org/fx"
 
 	"rest-api/internal/app"
+	"rest-api/internal/config"
 )
 
 // main은 애플리케이션의 진입점이다.
@@ -54,10 +55,10 @@ func main() {
 	// fx.StopTimeout에 Config.ShutdownTimeout 값을 전달하기 위해
 	// fx 컨테이너 생성 전에 Config가 필요하다.
 	//
-	// fx.Supply()는 이미 생성된 값을 DI 컨테이너에 "그대로" 등록한다.
-	// fx.Provide()가 "생성 함수"를 등록하는 것과 달리,
-	// fx.Supply()는 "이미 만들어진 인스턴스"를 등록한다.
-	cfg := app.NewConfig()
+	// config.NewConfig()는 internal/config 패키지의 생성자다.
+	// 환경변수에서 설정값을 읽어 *config.Config를 반환한다.
+	// Config를 별도 패키지로 분리하여 app, db 등 여러 패키지에서 공유한다.
+	cfg := config.NewConfig()
 
 	fx.New(
 		// fx.StopTimeout은 앱 종료 시 OnStop 훅들이 완료될 때까지 기다리는 최대 시간이다.

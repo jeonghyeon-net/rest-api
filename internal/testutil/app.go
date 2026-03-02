@@ -35,6 +35,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"rest-api/internal/app"
+	"rest-api/internal/config"
 )
 
 // NewTestApp은 E2E 테스트용 Fiber 앱과 in-memory DB를 생성하여 반환한다.
@@ -60,13 +61,13 @@ func NewTestApp(t *testing.T, opts ...fx.Option) (*fiber.App, *sql.DB) {
 
 	// ─── 1단계: 테스트용 Config 생성 ──────────────────────────────────────
 	//
-	// 프로덕션 Config(app.NewConfig)와 같은 구조체를 사용하되,
+	// 프로덕션 Config(config.NewConfig)와 같은 구조체를 사용하되,
 	// 테스트에 적합한 값으로 변경한다:
 	//   - AppEnv: "test" — 테스트 환경임을 명시
 	//   - Port: "0" — OS가 사용 가능한 임의의 포트를 할당 (포트 충돌 방지)
 	//   - DBPath: ":memory:" — 실제 파일 대신 메모리에만 존재하는 DB
 	//   - 짧은 타임아웃 — 테스트가 빠르게 실패하도록
-	cfg := &app.Config{
+	cfg := &config.Config{
 		AppEnv:          "test",
 		Port:            "0",
 		DBPath:          ":memory:",

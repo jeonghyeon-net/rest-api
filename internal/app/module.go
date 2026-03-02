@@ -1,13 +1,17 @@
 // Package app은 애플리케이션의 핵심 인프라를 제공한다.
 //
-// 이 패키지는 cmd/server/main.go에서 분리된 설정, 로거, 서버, 에러 처리, 검증 로직을
+// 이 패키지는 cmd/server/main.go에서 분리된 로거, 서버, 에러 처리, 검증 로직을
 // 하나의 재사용 가능한 패키지로 통합한다.
 //
 // 왜 분리했는가?
 // Go에서 package main은 다른 패키지에서 import할 수 없다.
-// cmd/server/에 있던 Config, AppError 등의 타입과 DI 설정을
+// cmd/server/에 있던 AppError 등의 타입과 DI 설정을
 // internal/app/으로 이동하면, 테스트 유틸리티(internal/testutil)에서도
 // 동일한 DI 그래프를 재사용할 수 있다.
+//
+// 설정(Config)은 internal/config 패키지에 별도로 분리되어 있다.
+// 이렇게 분리하면 internal/db 등 하위 패키지에서도 Config를 직접 import할 수 있어
+// 래퍼 함수 없이 fx가 자동으로 의존성을 주입한다.
 //
 // NestJS에서 AppModule을 정의하고, main.ts와 테스트에서 모두 사용하는 패턴과 같다:
 //
@@ -23,10 +27,7 @@
 package app
 
 import (
-	"database/sql"
-
 	"go.uber.org/fx"
-	"go.uber.org/zap"
 
 	"rest-api/internal/db"
 )
@@ -61,23 +62,19 @@ func AppModule() fx.Option {
 		// 다른 곳에서 *fiber.App을 요청하면 이 함수를 호출해서 주입한다.
 		fx.Provide(newFiberApp),
 
-		// db.NewDB를 래퍼 함수로 감싸서 DI 컨테이너에 등록한다.
+		// db.NewDB를 DI 컨테이너에 직접 등록한다.
 		// *sql.DB 타입이 필요한 곳에 자동으로 주입된다.
 		// NewDB 내부에서 SQLite 연결 생성 -> PRAGMA 설정까지 처리한다.
 		//
-		// db.NewDB는 dbPath 매개변수(string)를 받지만, fx는 string 타입을
-		// 자동으로 주입할 수 없다(어떤 string인지 구별 불가).
-		// 그래서 래퍼 함수에서 *Config를 주입받아 cfg.DBPath를 직접 전달한다.
+		// db.NewDB는 *config.Config를 매개변수로 받으므로,
+		// fx가 DI 컨테이너에서 *config.Config를 찾아 자동으로 주입한다.
+		// 이전에는 string 타입의 dbPath를 전달하기 위해 래퍼 함수가 필요했지만,
+		// Config를 internal/config 패키지로 분리한 덕분에
+		// db 패키지가 config를 직접 import할 수 있어 래퍼가 불필요해졌다.
 		//
-		// NestJS에서 useFactory로 의존성을 주입받아 인스턴스를 생성하는 것과 같다:
-		//   providers: [{
-		//     provide: 'DATABASE',
-		//     useFactory: (config: ConfigService) => new Database(config.get('DB_PATH')),
-		//     inject: [ConfigService],
-		//   }]
-		fx.Provide(func(lc fx.Lifecycle, logger *zap.Logger, cfg *Config) (*sql.DB, error) {
-			return db.NewDB(lc, logger, cfg.DBPath)
-		}),
+		// NestJS에서 providers에 서비스를 직접 등록하는 것과 같다:
+		//   providers: [DatabaseService]  // ConfigService는 DI가 자동 주입
+		fx.Provide(db.NewDB),
 
 		// 마이그레이션을 별도 단계로 실행한다.
 		// NewDB와 분리하여 fx.Invoke로 등록하면, *sql.DB가 주입된 후 자동 실행된다.

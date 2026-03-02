@@ -34,6 +34,8 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 	_ "modernc.org/sqlite"
+
+	"rest-api/internal/config"
 )
 
 // openDB는 지정된 경로에 SQLite 데이터베이스 연결을 생성하고 최적 설정을 적용한다.
@@ -165,7 +167,7 @@ func openDB(path string) (*sql.DB, error) {
 // NewDB는 fx DI 컨테이너에 *sql.DB를 제공하는 생성자(constructor) 함수다.
 //
 // 대문자로 시작하므로 패키지 외부에서 접근 가능하다(exported/공개).
-// main.go에서 fx.Provide()로 래퍼 함수를 등록하여 *sql.DB를 제공한다.
+// AppModule에서 fx.Provide(db.NewDB)로 직접 등록된다.
 //
 // NestJS에서 @Module({ providers: [DatabaseService] })로 등록하고
 // constructor(private db: DatabaseService)로 주입받는 것과 같다.
@@ -175,11 +177,11 @@ func openDB(path string) (*sql.DB, error) {
 //     OnStart/OnStop 훅을 등록하여 앱 시작/종료 시 실행할 로직을 정의한다.
 //     NestJS의 OnModuleInit/OnModuleDestroy 인터페이스와 같은 역할이다.
 //   - logger: *zap.Logger — 구조화된 로거. fx가 자동으로 주입한다.
-//   - dbPath: DB 파일 경로. cmd/server의 Config.DBPath에서 주입받는다.
-//     internal 패키지는 cmd/server(main 패키지)를 직접 import할 수 없으므로,
-//     설정값을 매개변수로 전달받는 방식을 사용한다.
-//     NestJS에서 @Inject('DB_PATH') dbPath: string으로 토큰 기반 주입하는 것과 유사하다.
-func NewDB(lc fx.Lifecycle, logger *zap.Logger, dbPath string) (*sql.DB, error) {
+//   - cfg: *config.Config — 애플리케이션 설정. DBPath 등 DB 관련 설정을 포함한다.
+//     internal/config 패키지를 직접 import하므로 래퍼 함수 없이 fx가 자동 주입한다.
+//     NestJS에서 @Inject(ConfigService) config: ConfigService로 주입하는 것과 유사하다.
+func NewDB(lc fx.Lifecycle, logger *zap.Logger, cfg *config.Config) (*sql.DB, error) {
+	dbPath := cfg.DBPath
 	logger.Info("SQLite 데이터베이스 연결 시작", zap.String("path", dbPath))
 
 	// openDB를 호출하여 DB 연결을 생성한다.

@@ -1,4 +1,19 @@
-package app
+// Package config는 애플리케이션의 모든 설정을 중앙에서 관리한다.
+//
+// NestJS의 @nestjs/config 모듈(ConfigModule + ConfigService)과 같은 역할이다.
+// 환경변수에서 설정값을 읽어 Config 구조체에 모아두고,
+// fx DI 컨테이너를 통해 애플리케이션 전체에서 주입받아 사용한다.
+//
+// 왜 별도 패키지로 분리하는가?
+// Config를 internal/app 패키지에 두면, internal/db처럼 app을 import할 수 없는
+// 하위 패키지에서 Config를 직접 사용할 수 없다 (순환 의존성 발생).
+// internal/config로 분리하면:
+//
+//	cmd/server → internal/app → internal/config ← internal/db
+//
+// 이처럼 app과 db 모두 config를 import할 수 있어 순환 의존성이 없다.
+// NestJS에서 ConfigModule을 독립 모듈로 만들어 여러 모듈에서 import하는 것과 같다.
+package config
 
 import (
 	"os"

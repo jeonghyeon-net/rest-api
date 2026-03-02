@@ -16,6 +16,8 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/requestid"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
+
+	"rest-api/internal/config"
 )
 
 // newFiberApp은 Fiber 애플리케이션 인스턴스를 생성하고 라우트를 등록한다.
@@ -23,7 +25,7 @@ import (
 // *fiber.App 타입이 필요한 곳에 자동으로 주입된다.
 //
 // NestJS에서 Express/Fastify 인스턴스를 설정하는 것과 비슷하다.
-func newFiberApp(cfg *Config, logger *zap.Logger, database *sql.DB) *fiber.App {
+func newFiberApp(cfg *config.Config, logger *zap.Logger, database *sql.DB) *fiber.App {
 	// fiber.New()로 새로운 Fiber 앱을 생성한다.
 	// NestJS의 NestFactory.create()에서 내부적으로 Express 인스턴스를 만드는 것과 같다.
 	//
@@ -232,7 +234,7 @@ func registerHealthRoutes(app *fiber.App, database *sql.DB) {
 // 고루틴 안에서 서버 에러가 발생했을 때, Shutdown()을 호출하면
 // fx의 모든 OnStop 훅이 역순으로 실행되며 앱이 gracefully 종료된다.
 // 이것이 fx 공식 문서에서 권장하는 "post-startup 에러 처리" 패턴이다.
-func StartServer(lc fx.Lifecycle, shutdowner fx.Shutdowner, app *fiber.App, logger *zap.Logger, cfg *Config) {
+func StartServer(lc fx.Lifecycle, shutdowner fx.Shutdowner, app *fiber.App, logger *zap.Logger, cfg *config.Config) {
 	// Config 구조체에서 포트를 읽는다.
 	// 이전에는 getEnv("PORT", "42001")를 직접 호출했지만,
 	// 이제 Config에서 일괄 관리하므로 설정 변경이 한 곳에서만 이루어진다.

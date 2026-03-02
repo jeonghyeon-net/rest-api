@@ -1,6 +1,10 @@
 package app
 
-import "go.uber.org/zap"
+import (
+	"go.uber.org/zap"
+
+	"rest-api/internal/config"
+)
 
 // newLogger는 환경에 따라 적절한 zap 로거를 생성한다.
 // AppModule 내에서 fx.Provide()로 등록되며, *zap.Logger 타입이 필요한 곳에 자동 주입된다.
@@ -19,7 +23,7 @@ import "go.uber.org/zap"
 // 환경별 동작:
 //   - development: 사람이 읽기 쉬운 컬러 로그 (zap.NewDevelopment)
 //   - production:  JSON 구조화 로그 (zap.NewProduction)
-func newLogger(cfg *Config) (*zap.Logger, error) {
+func newLogger(cfg *config.Config) (*zap.Logger, error) {
 	if cfg.AppEnv == "production" {
 		// 프로덕션: JSON 형태의 구조화 로그
 		// 예: {"level":"error","ts":1709369400,"msg":"서버 에러","port":"42001"}
