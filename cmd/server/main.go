@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gofiber/fiber/v3"
 	"github.com/joho/godotenv"
 	// automaxprocs는 우버가 만든 라이브러리로, 앱 시작 시 GOMAXPROCS를 자동으로 설정한다.
 	// GOMAXPROCS는 Go 런타임이 동시에 사용할 수 있는 OS 스레드 수를 결정하는 값이다.
@@ -24,6 +25,8 @@ import (
 
 	"rest-api/internal/app"
 	"rest-api/internal/config"
+	"rest-api/internal/domain/todo"
+	todohttp "rest-api/internal/domain/todo/handler/http"
 )
 
 // main은 애플리케이션의 진입점이다.
@@ -78,10 +81,38 @@ func main() {
 		// fx.Provide(app.NewConfig)와 달리, 함수를 호출하지 않고 cfg 인스턴스를 그대로 등록한다.
 		fx.Supply(cfg),
 
-		// AppModule()은 로거, Fiber 앱, DB 연결, 마이그레이션 등
-		// 프로덕션에 필요한 모든 DI 의존성을 하나의 fx.Option으로 묶어 제공한다.
+		// AppModule()은 로거, Fiber 앱, DB 연결 등
+		// 프로덕션에 필요한 인프라 의존성을 하나의 fx.Option으로 묶어 제공한다.
 		// NestJS에서 AppModule을 imports에 넣는 것과 같다.
 		app.AppModule(),
+
+		// ─── Todo 도메인 모듈 ────────────────────────────────────────────
+		// Todo 도메인의 서비스, 핸들러, 라우트 등록을 DI에 추가한다.
+		// NestJS에서 AppModule의 imports에 도메인 모듈을 나열하는 것과 같다:
+		//   @Module({ imports: [TodoModule, UserModule, ...] })
+		//
+		// app.AppModule()에 직접 넣지 않는 이유:
+		// 도메인 서비스가 internal/app의 에러 타입(AppError)을 import하므로
+		// app → todo → app 순환 참조(import cycle)가 발생한다.
+		// Go에서는 패키지 간 순환 참조가 절대 허용되지 않는다.
+		// main.go에서 별도로 등록하면 의존 방향이 한쪽(todo → app)으로 유지된다.
+		//
+		// todo.NewService: alias.go의 생성자. fx가 *sql.DB를 자동 주입한다.
+		// todohttp.New: HTTP 핸들러 생성자. fx가 todo.Service를 자동 주입한다.
+		fx.Provide(todo.NewService),
+		fx.Provide(todohttp.New),
+
+		// Todo 도메인의 라우트를 Fiber 앱에 등록한다.
+		// fx.Invoke로 등록하면 앱 시작 시 자동으로 실행된다.
+		// fx가 *fiber.App과 todohttp.Handler를 자동 주입한다.
+		//
+		// newFiberApp에 직접 todohttp.Handler를 매개변수로 추가하지 않는 이유:
+		// newFiberApp은 internal/app 패키지에 있고, todohttp는 todo 도메인에 있으므로
+		// app → todo 의존이 생기면 순환 참조가 된다.
+		// fx.Invoke를 사용하면 main.go가 두 패키지를 조합하므로 순환을 피한다.
+		fx.Invoke(func(fiberApp *fiber.App, h todohttp.Handler) {
+			h.RegisterRoutes(fiberApp)
+		}),
 
 		// StartServer 함수를 호출한다.
 		// fx.Invoke()에 등록된 함수는 앱 시작 시 자동 실행된다.
