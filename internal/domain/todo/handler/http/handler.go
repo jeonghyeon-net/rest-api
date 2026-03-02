@@ -116,9 +116,13 @@ func New(svc todo.Service) Handler {
 // NestJS의 @Param('id', ParseIntPipe)와 유사한 역할이다.
 func (h *handler) RegisterRoutes(fiberApp *fiber.App) {
 	// ─── Todo CRUD ────────────────────────────────────────────────────────
+	// StrictRouting=true 설정에서 Group("/todos") + Post("/")는 "/todos/"로 등록되어
+	// POST /todos 요청이 404가 된다.
+	// 빈 문자열("")을 사용하면 "/todos"로 정확히 등록된다.
+	// REST API 표준: POST /todos, GET /todos?page=1 (트레일링 슬래시 없음)
 	todos := fiberApp.Group("/todos")
-	todos.Post("/", h.createTodo)
-	todos.Get("/", h.listTodos)
+	todos.Post("", h.createTodo)
+	todos.Get("", h.listTodos)
 	todos.Get("/:id<int>", h.getTodo)
 	todos.Patch("/:id<int>", h.updateTodo)
 	todos.Delete("/:id<int>", h.deleteTodo)
@@ -133,8 +137,8 @@ func (h *handler) RegisterRoutes(fiberApp *fiber.App) {
 
 	// ─── Tag CRUD ─────────────────────────────────────────────────────────
 	tags := fiberApp.Group("/tags")
-	tags.Post("/", h.createTag)
-	tags.Get("/", h.listTags)
+	tags.Post("", h.createTag)
+	tags.Get("", h.listTags)
 	tags.Patch("/:id<int>", h.updateTag)
 	tags.Delete("/:id<int>", h.deleteTag)
 }

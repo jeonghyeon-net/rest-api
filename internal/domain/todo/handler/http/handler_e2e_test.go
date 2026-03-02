@@ -15,12 +15,6 @@
 //	}).compile();
 //
 // 과 같은 구조다.
-//
-// 중요: Fiber의 StrictRouting=true 설정 때문에 컬렉션 엔드포인트는
-// 트레일링 슬래시(/)가 필요하다.
-// Group("/todos") + Post("/")는 "/todos/" 경로로 등록되므로
-// 요청 시 "/todos/"로 보내야 한다.
-// 개별 리소스 엔드포인트(/:id)는 트레일링 슬래시가 없다.
 package http_test
 
 import (
@@ -149,10 +143,8 @@ func decodeJSON[T any](s *TodoE2ESuite, resp *http.Response) T {
 // TestTodoCRUD는 Todo의 생성 → 조회 → 수정 → 삭제 전체 흐름을 검증한다.
 // 하나의 테스트에서 순차적으로 실행하여 CRUD 시나리오를 검증한다.
 func (s *TodoE2ESuite) TestTodoCRUD() {
-	// ─── 1. 생성 (POST /todos/) ─────────────────────────────────────────
-	// StrictRouting=true이므로 Group("/todos") + Post("/")는 /todos/ 경로로 등록된다.
-	// 따라서 컬렉션 엔드포인트에는 트레일링 슬래시가 필요하다.
-	resp := s.doRequest(http.MethodPost, "/todos/", s.jsonBody(map[string]string{
+	// ─── 1. 생성 (POST /todos) ──────────────────────────────────────────
+	resp := s.doRequest(http.MethodPost, "/todos", s.jsonBody(map[string]string{
 		"title": "E2E 테스트 할 일",
 		"body":  "테스트 본문입니다",
 	}))
@@ -166,7 +158,6 @@ func (s *TodoE2ESuite) TestTodoCRUD() {
 	s.Empty(created.Tags) // 새 할 일에는 태그 없음
 
 	// ─── 2. 조회 (GET /todos/:id) ──────────────────────────────────────
-	// 개별 리소스 경로는 트레일링 슬래시가 없다.
 	resp = s.doRequest(http.MethodGet, fmt.Sprintf("/todos/%d", created.ID), nil)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -204,8 +195,8 @@ func (s *TodoE2ESuite) TestTodoCRUD() {
 
 // TestTagCRUD는 Tag의 생성 → 목록 조회 → 수정 → 삭제 전체 흐름을 검증한다.
 func (s *TodoE2ESuite) TestTagCRUD() {
-	// ─── 1. 생성 (POST /tags/) ──────────────────────────────────────────
-	resp := s.doRequest(http.MethodPost, "/tags/", s.jsonBody(map[string]string{
+	// ─── 1. 생성 (POST /tags) ───────────────────────────────────────────
+	resp := s.doRequest(http.MethodPost, "/tags", s.jsonBody(map[string]string{
 		"name": "긴급",
 	}))
 	s.Equal(http.StatusCreated, resp.StatusCode)
@@ -214,15 +205,15 @@ func (s *TodoE2ESuite) TestTagCRUD() {
 	s.NotZero(created.ID)
 	s.Equal("긴급", created.Name)
 
-	// ─── 2. 목록 조회 (GET /tags/) ─────────────────────────────────────
+	// ─── 2. 목록 조회 (GET /tags) ──────────────────────────────────────
 	// 추가 태그 생성
-	resp = s.doRequest(http.MethodPost, "/tags/", s.jsonBody(map[string]string{
+	resp = s.doRequest(http.MethodPost, "/tags", s.jsonBody(map[string]string{
 		"name": "중요",
 	}))
 	s.Equal(http.StatusCreated, resp.StatusCode)
 	resp.Body.Close()
 
-	resp = s.doRequest(http.MethodGet, "/tags/", nil)
+	resp = s.doRequest(http.MethodGet, "/tags", nil)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
 	tags := decodeJSON[[]tagmodel.Tag](s, resp)
@@ -251,21 +242,21 @@ func (s *TodoE2ESuite) TestTagCRUD() {
 // GET /todos/:id 응답에 태그가 포함되는지 검증한다.
 func (s *TodoE2ESuite) TestTodoTagAssociation() {
 	// 테스트 데이터 준비: 할 일 1개 + 태그 2개
-	resp := s.doRequest(http.MethodPost, "/todos/", s.jsonBody(map[string]string{
+	resp := s.doRequest(http.MethodPost, "/todos", s.jsonBody(map[string]string{
 		"title": "태그 테스트 할 일",
 	}))
 	s.Require().Equal(http.StatusCreated, resp.StatusCode)
 
 	todoResult := decodeJSON[model.TodoWithTags](s, resp)
 
-	resp = s.doRequest(http.MethodPost, "/tags/", s.jsonBody(map[string]string{
+	resp = s.doRequest(http.MethodPost, "/tags", s.jsonBody(map[string]string{
 		"name": "태그A",
 	}))
 	s.Require().Equal(http.StatusCreated, resp.StatusCode)
 
 	tagA := decodeJSON[tagmodel.Tag](s, resp)
 
-	resp = s.doRequest(http.MethodPost, "/tags/", s.jsonBody(map[string]string{
+	resp = s.doRequest(http.MethodPost, "/tags", s.jsonBody(map[string]string{
 		"name": "태그B",
 	}))
 	s.Require().Equal(http.StatusCreated, resp.StatusCode)
@@ -273,7 +264,6 @@ func (s *TodoE2ESuite) TestTodoTagAssociation() {
 	tagB := decodeJSON[tagmodel.Tag](s, resp)
 
 	// ─── 1. 태그 연결 (POST /todos/:id/tags) ───────────────────────────
-	// 서브리소스 경로는 트레일링 슬래시가 없다 (/:id<int>/tags로 등록됨).
 	resp = s.doRequest(http.MethodPost, fmt.Sprintf("/todos/%d/tags", todoResult.ID),
 		s.jsonBody(map[string]int64{"tagId": tagA.ID}))
 	s.Equal(http.StatusNoContent, resp.StatusCode)
@@ -314,7 +304,7 @@ func (s *TodoE2ESuite) TestTodoTagAssociation() {
 func (s *TodoE2ESuite) TestPagination() {
 	// 테스트 데이터: 할 일 5개 생성
 	for i := range 5 {
-		resp := s.doRequest(http.MethodPost, "/todos/", s.jsonBody(map[string]string{
+		resp := s.doRequest(http.MethodPost, "/todos", s.jsonBody(map[string]string{
 			"title": fmt.Sprintf("페이지네이션 테스트 %d", i+1),
 		}))
 		s.Equal(http.StatusCreated, resp.StatusCode)
@@ -322,8 +312,7 @@ func (s *TodoE2ESuite) TestPagination() {
 	}
 
 	// page=1, limit=2로 조회
-	// 쿼리 파라미터가 있어도 기본 경로에는 트레일링 슬래시가 필요하다.
-	resp := s.doRequest(http.MethodGet, "/todos/?page=1&limit=2", nil)
+	resp := s.doRequest(http.MethodGet, "/todos?page=1&limit=2", nil)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
 	list := decodeJSON[model.TodoList](s, resp)
@@ -338,23 +327,23 @@ func (s *TodoE2ESuite) TestPagination() {
 // 태그 필터 테스트
 // ──────────────────────────────────────────────────────────────────────────────
 
-// TestTagFilter는 GET /todos/?tag=xxx 태그 필터링을 검증한다.
+// TestTagFilter는 GET /todos?tag=xxx 태그 필터링을 검증한다.
 func (s *TodoE2ESuite) TestTagFilter() {
 	// 테스트 데이터: 할 일 2개 + 태그 1개
-	resp := s.doRequest(http.MethodPost, "/todos/", s.jsonBody(map[string]string{
+	resp := s.doRequest(http.MethodPost, "/todos", s.jsonBody(map[string]string{
 		"title": "필터 대상",
 	}))
 	s.Require().Equal(http.StatusCreated, resp.StatusCode)
 
 	targetTodo := decodeJSON[model.TodoWithTags](s, resp)
 
-	resp = s.doRequest(http.MethodPost, "/todos/", s.jsonBody(map[string]string{
+	resp = s.doRequest(http.MethodPost, "/todos", s.jsonBody(map[string]string{
 		"title": "필터 제외",
 	}))
 	s.Equal(http.StatusCreated, resp.StatusCode)
 	resp.Body.Close()
 
-	resp = s.doRequest(http.MethodPost, "/tags/", s.jsonBody(map[string]string{
+	resp = s.doRequest(http.MethodPost, "/tags", s.jsonBody(map[string]string{
 		"name": "필터태그",
 	}))
 	s.Require().Equal(http.StatusCreated, resp.StatusCode)
@@ -368,7 +357,7 @@ func (s *TodoE2ESuite) TestTagFilter() {
 	resp.Body.Close()
 
 	// tag 파라미터로 필터링
-	resp = s.doRequest(http.MethodGet, "/todos/?tag=필터태그", nil)
+	resp = s.doRequest(http.MethodGet, "/todos?tag=필터태그", nil)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
 	list := decodeJSON[model.TodoList](s, resp)
@@ -401,14 +390,14 @@ func (s *TodoE2ESuite) TestNotFoundTodo() {
 
 // TestDuplicateTag는 중복된 태그 이름으로 생성 시 409를 반환하는지 검증한다.
 func (s *TodoE2ESuite) TestDuplicateTag() {
-	resp := s.doRequest(http.MethodPost, "/tags/", s.jsonBody(map[string]string{
+	resp := s.doRequest(http.MethodPost, "/tags", s.jsonBody(map[string]string{
 		"name": "유니크태그",
 	}))
 	s.Equal(http.StatusCreated, resp.StatusCode)
 	resp.Body.Close()
 
 	// 같은 이름으로 다시 생성 → 409 Conflict
-	resp = s.doRequest(http.MethodPost, "/tags/", s.jsonBody(map[string]string{
+	resp = s.doRequest(http.MethodPost, "/tags", s.jsonBody(map[string]string{
 		"name": "유니크태그",
 	}))
 	s.Equal(http.StatusConflict, resp.StatusCode)
@@ -418,14 +407,14 @@ func (s *TodoE2ESuite) TestDuplicateTag() {
 // TestValidationError는 필수 필드 누락 시 422를 반환하는지 검증한다.
 func (s *TodoE2ESuite) TestValidationError() {
 	// title 없이 Todo 생성 → 422 Unprocessable Entity
-	resp := s.doRequest(http.MethodPost, "/todos/", s.jsonBody(map[string]string{
+	resp := s.doRequest(http.MethodPost, "/todos", s.jsonBody(map[string]string{
 		"body": "제목 없음",
 	}))
 	s.Equal(http.StatusUnprocessableEntity, resp.StatusCode)
 	resp.Body.Close()
 
 	// name 없이 Tag 생성 → 422
-	resp = s.doRequest(http.MethodPost, "/tags/", s.jsonBody(map[string]string{}))
+	resp = s.doRequest(http.MethodPost, "/tags", s.jsonBody(map[string]string{}))
 	s.Equal(http.StatusUnprocessableEntity, resp.StatusCode)
 	resp.Body.Close()
 }
