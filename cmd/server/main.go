@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gofiber/fiber/v3"
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/joho/godotenv"
 	// automaxprocs는 우버가 만든 라이브러리로, 앱 시작 시 GOMAXPROCS를 자동으로 설정한다.
 	// GOMAXPROCS는 Go 런타임이 동시에 사용할 수 있는 OS 스레드 수를 결정하는 값이다.
@@ -102,16 +102,20 @@ func main() {
 		fx.Provide(todo.NewService),
 		fx.Provide(todohttp.New),
 
-		// Todo 도메인의 라우트를 Fiber 앱에 등록한다.
+		// Todo 도메인의 라우트를 huma API에 등록한다.
 		// fx.Invoke로 등록하면 앱 시작 시 자동으로 실행된다.
-		// fx가 *fiber.App과 todohttp.Handler를 자동 주입한다.
+		// fx가 huma.API와 todohttp.Handler를 자동 주입한다.
+		//
+		// 기존에는 *fiber.App을 받았지만, huma 도입으로 huma.API를 받도록 변경되었다.
+		// huma.API에 오퍼레이션을 등록하면 OpenAPI 스펙이 자동으로 생성되고,
+		// 어댑터(internal/app/huma.go)가 Fiber 라우트로 변환한다.
 		//
 		// newFiberApp에 직접 todohttp.Handler를 매개변수로 추가하지 않는 이유:
 		// newFiberApp은 internal/app 패키지에 있고, todohttp는 todo 도메인에 있으므로
 		// app → todo 의존이 생기면 순환 참조가 된다.
 		// fx.Invoke를 사용하면 main.go가 두 패키지를 조합하므로 순환을 피한다.
-		fx.Invoke(func(fiberApp *fiber.App, h todohttp.Handler) {
-			h.RegisterRoutes(fiberApp)
+		fx.Invoke(func(api huma.API, h todohttp.Handler) {
+			h.RegisterRoutes(api)
 		}),
 
 		// StartServer 함수를 호출한다.
