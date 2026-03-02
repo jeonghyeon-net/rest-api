@@ -21,6 +21,7 @@ import (
 	// 위해 임포트하는 Go 관용 패턴이다. automaxprocs의 init()이 자동으로 GOMAXPROCS를 설정한다.
 	_ "go.uber.org/automaxprocs"
 	"go.uber.org/fx"
+	"go.uber.org/zap"
 
 	"rest-api/internal/db"
 )
@@ -80,10 +81,23 @@ func main() {
 		// 다른 곳에서 *fiber.App을 요청하면 이 함수를 호출해서 주입한다.
 		fx.Provide(newFiberApp),
 
-		// db.NewDB 함수를 DI 컨테이너에 등록한다.
+		// db.NewDB를 래퍼 함수로 감싸서 DI 컨테이너에 등록한다.
 		// *sql.DB 타입이 필요한 곳에 자동으로 주입된다.
 		// NewDB 내부에서 SQLite 연결 생성 → PRAGMA 설정 → 마이그레이션 실행까지 처리한다.
-		fx.Provide(db.NewDB),
+		//
+		// db.NewDB는 dbPath 매개변수(string)를 받지만, fx는 string 타입을
+		// 자동으로 주입할 수 없다(어떤 string인지 구별 불가).
+		// 그래서 래퍼 함수에서 *Config를 주입받아 cfg.DBPath를 직접 전달한다.
+		//
+		// NestJS에서 useFactory로 의존성을 주입받아 인스턴스를 생성하는 것과 같다:
+		//   providers: [{
+		//     provide: 'DATABASE',
+		//     useFactory: (config: ConfigService) => new Database(config.get('DB_PATH')),
+		//     inject: [ConfigService],
+		//   }]
+		fx.Provide(func(lc fx.Lifecycle, logger *zap.Logger, cfg *Config) (*sql.DB, error) {
+			return db.NewDB(lc, logger, cfg.DBPath)
+		}),
 
 		// DB 초기화를 강제한다.
 		// fx는 "누군가 요청할 때만" Provider를 실행하는 지연 초기화(lazy init) 방식이다.
@@ -95,7 +109,7 @@ func main() {
 		//
 		// func(_ *sql.DB) {}는 익명 함수(anonymous function)로,
 		// *sql.DB를 인자로 받지만 아무것도 하지 않는다.
-		// fx는 이 함수의 인자 타입을 보고 *sql.DB Provider(db.NewDB)를 실행한다.
+		// fx는 이 함수의 인자 타입을 보고 *sql.DB Provider를 실행한다.
 		fx.Invoke(func(_ *sql.DB) {}),
 
 		// startServer 함수를 호출한다.

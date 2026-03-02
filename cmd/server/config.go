@@ -18,6 +18,10 @@ import (
 //
 // NestJS에서 ConfigModule.forRoot()로 설정을 중앙화하고
 // configService.get('PORT')로 접근하는 것과 같은 패턴이다.
+// 필드 순서는 Go의 fieldalignment 규칙에 따라 포인터를 포함하는 타입(string)을
+// 먼저 배치하고, 포인터가 없는 타입(time.Duration, int)을 뒤에 배치한다.
+// 이렇게 하면 GC가 스캔해야 하는 포인터 영역이 메모리에서 연속되어
+// 구조체의 메모리 레이아웃이 최적화된다.
 type Config struct {
 	// AppEnv는 실행 환경을 나타낸다. "development" 또는 "production".
 	// 로거 형식, 디버그 모드 등 환경별 동작을 결정한다.
@@ -25,6 +29,10 @@ type Config struct {
 
 	// Port는 HTTP 서버가 바인딩할 포트 번호다.
 	Port string
+
+	// DBPath는 SQLite 데이터베이스 파일 경로다.
+	// 예: "./data/app.db" (개발), "/data/app.db" (Docker)
+	DBPath string
 
 	// ReadTimeout은 클라이언트가 요청을 보내는 데 허용되는 최대 시간이다.
 	// Slowloris 공격 방어에 효과적이다.
@@ -36,11 +44,11 @@ type Config struct {
 	// IdleTimeout은 Keep-Alive 연결의 최대 유휴 시간이다.
 	IdleTimeout time.Duration
 
-	// BodyLimit은 요청 바디의 최대 크기(바이트)다.
-	BodyLimit int
-
 	// ShutdownTimeout은 graceful shutdown 시 대기하는 최대 시간이다.
 	ShutdownTimeout time.Duration
+
+	// BodyLimit은 요청 바디의 최대 크기(바이트)다.
+	BodyLimit int
 }
 
 // newConfig는 환경변수에서 설정값을 읽어 Config 구조체를 생성한다.
@@ -57,6 +65,7 @@ func newConfig() *Config {
 		IdleTimeout:     120 * time.Second,
 		BodyLimit:       4 * 1024 * 1024, // 4MB
 		ShutdownTimeout: 30 * time.Second,
+		DBPath:          getEnv("DB_PATH", "./data/app.db"),
 	}
 }
 

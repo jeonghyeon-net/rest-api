@@ -59,11 +59,11 @@ type DomainPath struct {
 //
 // 두 가지 경로 패턴을 인식한다:
 //
-// 1. 도메인 경로: "internal/domain/{도메인}/..."
-//    → Domain, Subdomain, Layer 등이 채워짐
+//  1. 도메인 경로: "internal/domain/{도메인}/..."
+//     → Domain, Subdomain, Layer 등이 채워짐
 //
-// 2. Saga 경로: "internal/saga/{사가이름}/..."
-//    → IsSaga=true, SagaName이 채워짐
+//  2. Saga 경로: "internal/saga/{사가이름}/..."
+//     → IsSaga=true, SagaName이 채워짐
 //
 // 어느 패턴에도 해당하지 않으면 nil을 반환한다.
 func ParseDomainPath(relPath string) *DomainPath {

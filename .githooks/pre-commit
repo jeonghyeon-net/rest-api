@@ -3,8 +3,8 @@
 # 어느 단계에서든 실패하면 커밋이 즉시 차단된다. (fast-fail 전략)
 #
 # 실행 순서:
-#   1. gofmt     - 코드 포맷 자동 수정 + 재스테이징
-#   2. golangci-lint - 정적 분석 + 자동 수정 가능한 린트 이슈 수정 + 재스테이징
+#   1. make fmt  - 코드 포맷 자동 수정 (gofmt + golangci-lint fmt) + 재스테이징
+#   2. make lint - 정적 분석 (golangci-lint + nilaway)
 #
 # 참고: 빌드 검증(make build)과 아키텍처 규칙 검증(make arch)은
 #       pre-push 훅에서 실행된다. (push 전에 한 번만 검증하여 커밋 속도를 높인다)
@@ -12,54 +12,41 @@
 # 이 훅은 .githooks/ 디렉토리에 저장되어 git으로 버전 관리된다.
 # 활성화하려면: make setup (git config core.hooksPath .githooks 실행)
 
-# --- 1단계: gofmt (코드 포맷 자동 수정) ---
-# gofmt -w: 포맷이 맞지 않는 파일을 자동으로 수정한다.
+# --- 1단계: make fmt (코드 포맷 자동 수정) ---
+# gofmt + golangci-lint fmt를 실행하여 포맷을 자동으로 수정한다.
 # 수정된 파일은 git add로 스테이징 영역에 다시 추가한다.
-echo "🔍 [1/2] 코드 포맷 검사 및 자동 수정 중... (gofmt)"
 
-# 스테이징된 .go 파일만 대상으로 한다.
+# 스테이징된 .go 파일 목록을 미리 저장한다.
 # git diff --cached: 스테이징 영역에 있는 변경 파일 목록
 # --name-only: 파일 경로만 출력
 # --diff-filter=ACM: Added(추가), Copied(복사), Modified(수정)된 파일만 (삭제된 파일 제외)
 STAGED_GO_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$')
 
-if [ -n "$STAGED_GO_FILES" ]; then
-    # gofmt -l: 포맷이 맞지 않는 파일 목록 확인
-    UNFORMATTED=$(echo "$STAGED_GO_FILES" | xargs gofmt -l 2>/dev/null)
-    if [ -n "$UNFORMATTED" ]; then
-        # gofmt -w: 포맷을 자동으로 수정한다.
-        echo "$UNFORMATTED" | xargs gofmt -w
-        # 수정된 파일을 스테이징 영역에 다시 추가한다.
-        # 이렇게 해야 커밋에 포맷 수정이 포함된다.
-        echo "$UNFORMATTED" | xargs git add
-        echo "   자동 수정된 파일:"
-        echo "$UNFORMATTED" | while read -r file; do
-            echo "   - $file"
-        done
-    fi
-fi
-
-echo "✅ [1/2] 코드 포맷 검사 통과"
-
-# --- 2단계: golangci-lint (정적 분석 + 자동 수정) ---
-# --fix: 자동 수정이 가능한 린트 이슈(unused import, 정렬 등)를 자동으로 고친다.
-# 자동 수정이 불가능한 이슈가 남아 있으면 실패하여 커밋이 차단된다.
-echo "🔍 [2/2] 린트 검사 및 자동 수정 중... (golangci-lint --fix)"
-
-golangci-lint run --fix
+make fmt
 if [ $? -ne 0 ]; then
     echo ""
-    echo "❌ 린트 검사에서 자동 수정 불가능한 문제가 발견되어 커밋이 차단되었습니다."
-    echo "   위반 내용을 수정한 후 다시 커밋해 주세요."
+    echo "❌ 코드 포맷 수정 중 오류가 발생했습니다."
+    echo "   make fmt를 수동으로 실행하여 문제를 확인해 주세요."
     exit 1
 fi
 
-# golangci-lint --fix가 파일을 수정했을 수 있으므로, 변경된 .go 파일을 재스테이징한다.
+# make fmt가 파일을 수정했을 수 있으므로, 변경된 .go 파일을 재스테이징한다.
 if [ -n "$STAGED_GO_FILES" ]; then
     echo "$STAGED_GO_FILES" | xargs git add
 fi
 
-echo "✅ [2/2] 린트 검사 통과"
+# --- 2단계: make lint (정적 분석) ---
+# golangci-lint + nilaway를 실행하여 코드 품질을 검사한다.
+# 린트 이슈가 발견되면 커밋이 차단된다.
+
+make lint
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "❌ 린트 검사에서 문제가 발견되어 커밋이 차단되었습니다."
+    echo "   위반 내용을 수정한 후 다시 커밋해 주세요."
+    exit 1
+fi
+
 echo ""
 echo "✅ 모든 검사 통과! 커밋을 진행합니다."
 exit 0

@@ -12,12 +12,12 @@
 package analyzer
 
 import (
-	"go/ast"      // Go AST 노드 타입들이 정의된 패키지
-	"go/parser"   // Go 소스코드를 AST로 파싱하는 패키지
-	"go/token"    // 소스코드 내 위치(줄번호 등)를 추적하는 패키지
-	"os"          // 파일/디렉토리 조작
+	"go/ast"        // Go AST 노드 타입들이 정의된 패키지
+	"go/parser"     // Go 소스코드를 AST로 파싱하는 패키지
+	"go/token"      // 소스코드 내 위치(줄번호 등)를 추적하는 패키지
+	"os"            // 파일/디렉토리 조작
 	"path/filepath" // 파일 경로 조작 (OS에 맞게 경로 처리)
-	"strings"     // 문자열 처리 유틸리티
+	"strings"       // 문자열 처리 유틸리티
 )
 
 // ──────────────────────────────────────────────
@@ -147,7 +147,7 @@ func ParseFile(path string) (*FileInfo, error) {
 
 				ti := TypeInfo{
 					Name:       ts.Name.Name,         // 타입 이름
-					IsExported: ts.Name.IsExported(),  // 대문자 시작 여부
+					IsExported: ts.Name.IsExported(), // 대문자 시작 여부
 					Line:       fset.Position(ts.Pos()).Line,
 				}
 

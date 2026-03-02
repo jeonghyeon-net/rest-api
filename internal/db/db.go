@@ -75,7 +75,7 @@ func openDB(path string) (*sql.DB, error) {
 	// Clean으로 안전하게 정규화한 후 사용한다.
 	cleanPath := filepath.Clean(path)
 	dir := filepath.Dir(cleanPath)
-	if err := os.MkdirAll(dir, 0o750); err != nil { //nolint:gosec // G703: path는 환경변수(DB_PATH) 또는 하드코딩된 기본값에서만 오므로 경로 조작 위험 없음
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		// fmt.Errorf의 %w는 에러 래핑(wrapping) 동사다.
 		// 원본 에러를 감싸면서 추가 컨텍스트를 붙인다.
 		// 나중에 errors.Is()나 errors.Unwrap()으로 원본 에러를 꺼낼 수 있다.
@@ -165,8 +165,7 @@ func openDB(path string) (*sql.DB, error) {
 // NewDB는 fx DI 컨테이너에 *sql.DB를 제공하는 생성자(constructor) 함수다.
 //
 // 대문자로 시작하므로 패키지 외부에서 접근 가능하다(exported/공개).
-// fx.Provide(db.NewDB)로 DI 컨테이너에 등록하면,
-// *sql.DB 타입이 필요한 곳에 자동으로 이 함수가 호출되어 주입된다.
+// main.go에서 fx.Provide()로 래퍼 함수를 등록하여 *sql.DB를 제공한다.
 //
 // NestJS에서 @Module({ providers: [DatabaseService] })로 등록하고
 // constructor(private db: DatabaseService)로 주입받는 것과 같다.
@@ -176,24 +175,17 @@ func openDB(path string) (*sql.DB, error) {
 //     OnStart/OnStop 훅을 등록하여 앱 시작/종료 시 실행할 로직을 정의한다.
 //     NestJS의 OnModuleInit/OnModuleDestroy 인터페이스와 같은 역할이다.
 //   - logger: *zap.Logger — 구조화된 로거. fx가 자동으로 주입한다.
-func NewDB(lc fx.Lifecycle, logger *zap.Logger) (*sql.DB, error) {
-	// 환경변수에서 DB 파일 경로를 읽는다.
-	// 환경변수가 없으면 기본값 "./data/app.db"를 사용한다.
-	//
-	// os.Getenv()는 환경변수를 읽는 Go 표준 함수다.
-	// NestJS의 ConfigService.get('DB_PATH')와 유사하다.
-	// 빈 문자열("")이면 환경변수가 설정되지 않은 것이다.
-	path := os.Getenv("DB_PATH")
-	if path == "" {
-		path = "./data/app.db"
-	}
-
-	logger.Info("SQLite 데이터베이스 연결 시작", zap.String("path", path))
+//   - dbPath: DB 파일 경로. cmd/server의 Config.DBPath에서 주입받는다.
+//     internal 패키지는 cmd/server(main 패키지)를 직접 import할 수 없으므로,
+//     설정값을 매개변수로 전달받는 방식을 사용한다.
+//     NestJS에서 @Inject('DB_PATH') dbPath: string으로 토큰 기반 주입하는 것과 유사하다.
+func NewDB(lc fx.Lifecycle, logger *zap.Logger, dbPath string) (*sql.DB, error) {
+	logger.Info("SQLite 데이터베이스 연결 시작", zap.String("path", dbPath))
 
 	// openDB를 호출하여 DB 연결을 생성한다.
 	// 이 함수는 위에서 정의한 비공개(unexported) 함수다.
 	// PRAGMA 설정까지 모두 완료된 *sql.DB를 반환한다.
-	db, err := openDB(path)
+	db, err := openDB(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("DB 연결 실패: %w", err)
 	}
