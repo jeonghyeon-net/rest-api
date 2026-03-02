@@ -33,6 +33,7 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/requestid"
 	"github.com/joho/godotenv"
 	"go.uber.org/fx"
+	"go.uber.org/zap"
 )
 
 // main은 애플리케이션의 진입점이다.
@@ -61,6 +62,10 @@ func main() {
 		// 넉넉하게 30초로 설정한다. 30초가 지나면 fx가 강제로 종료한다.
 		fx.StopTimeout(30*time.Second),
 
+		// newLogger를 DI 컨테이너에 등록한다.
+		// *zap.Logger 타입이 필요한 곳에 자동으로 주입된다.
+		fx.Provide(newLogger),
+
 		// newFiberApp 함수를 DI 컨테이너에 등록한다.
 		// fx는 이 함수의 반환 타입(*fiber.App)을 보고,
 		// 다른 곳에서 *fiber.App을 요청하면 이 함수를 호출해서 주입한다.
@@ -68,7 +73,7 @@ func main() {
 
 		// startServer 함수를 호출한다.
 		// fx.Invoke()에 등록된 함수는 앱 시작 시 자동 실행된다.
-		// 매개변수(fx.Lifecycle, *fiber.App)는 DI 컨테이너에서 자동으로 주입받는다.
+		// 매개변수(fx.Lifecycle, *fiber.App 등)는 DI 컨테이너에서 자동으로 주입받는다.
 		fx.Invoke(startServer),
 	).Run()
 }
@@ -208,6 +213,34 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
+// newLogger는 환경에 따라 적절한 zap 로거를 생성한다.
+// fx.Provide()에 의해 DI 컨테이너에 등록되며, *zap.Logger 타입이 필요한 곳에 자동 주입된다.
+//
+// zap은 우버가 만든 구조화된(structured) 로깅 라이브러리다.
+// fmt.Printf와 달리 JSON 형태로 로그를 출력하여, DataDog, ELK 등 로그 수집 시스템에서
+// 필드별 검색/필터링이 가능하다.
+//
+// NestJS의 내장 Logger가 기본적으로 구조화된 출력을 해주는데,
+// Go에는 그런 기본 제공이 없어서 zap을 사용한다.
+// 성능도 fmt.Printf보다 빠르다 (리플렉션 없이 타입별 전용 메서드 사용).
+//
+// 환경별 동작:
+//   - development: 사람이 읽기 쉬운 컬러 로그 (zap.NewDevelopment)
+//   - production:  JSON 구조화 로그 (zap.NewProduction)
+func newLogger() (*zap.Logger, error) {
+	env := getEnv("APP_ENV", "development")
+
+	if env == "production" {
+		// 프로덕션: JSON 형태의 구조화 로그
+		// 예: {"level":"error","ts":1709369400,"msg":"서버 에러","port":"42001"}
+		return zap.NewProduction()
+	}
+
+	// 개발 환경: 사람이 읽기 쉬운 형태
+	// 예: 2024-03-02T18:30:00.000+0900  ERROR  서버 에러  {"port": "42001"}
+	return zap.NewDevelopment()
+}
+
 // startServer는 fx.Lifecycle 훅을 사용하여 서버의 시작과 종료를 관리한다.
 //
 // fx.Lifecycle은 NestJS의 OnModuleInit / OnModuleDestroy 라이프사이클 훅과 비슷하다.
@@ -215,12 +248,13 @@ func getEnv(key, fallback string) string {
 //   - OnStop: 앱 종료 시 호출 → 서버를 gracefully 종료한다
 //
 // 매개변수 lc(fx.Lifecycle)와 app(*fiber.App)은 fx가 DI 컨테이너에서 자동 주입한다.
+// logger(*zap.Logger)는 newLogger가 생성한 로거로, fx가 자동 주입한다.
 //
 // fx.Shutdowner는 fx가 자동으로 DI 컨테이너에 등록하는 인터페이스다.
 // 고루틴 안에서 서버 에러가 발생했을 때, Shutdown()을 호출하면
 // fx의 모든 OnStop 훅이 역순으로 실행되며 앱이 gracefully 종료된다.
 // 이것이 fx 공식 문서에서 권장하는 "post-startup 에러 처리" 패턴이다.
-func startServer(lc fx.Lifecycle, shutdowner fx.Shutdowner, app *fiber.App) {
+func startServer(lc fx.Lifecycle, shutdowner fx.Shutdowner, app *fiber.App, logger *zap.Logger) {
 	// 환경변수에서 포트를 읽는다. 없으면 기본값 42001을 사용한다.
 	port := getEnv("PORT", "42001")
 
@@ -257,15 +291,20 @@ func startServer(lc fx.Lifecycle, shutdowner fx.Shutdowner, app *fiber.App) {
 				if err := app.Listener(ln); err != nil {
 					// 서버가 비정상적으로 종료된 경우 fx 앱 전체를 gracefully 종료한다.
 					// shutdowner.Shutdown() 호출 시 모든 OnStop 훅이 역순으로 실행된다.
-					fmt.Printf("서버 에러: %v\n", err)
+					//
+					// zap.Error(err)는 에러를 구조화된 필드로 기록한다.
+					// fmt.Printf("%v", err)와 달리 에러 타입, 스택 정보가 JSON 필드로 분리되어
+					// 로그 수집 시스템에서 에러별 필터링/검색이 가능하다.
+					logger.Error("서버 에러", zap.Error(err))
 					if shutdownErr := shutdowner.Shutdown(); shutdownErr != nil {
-						fmt.Printf("shutdown 에러: %v\n", shutdownErr)
+						logger.Error("shutdown 에러", zap.Error(shutdownErr))
 					}
 				}
 			}()
 
 			// net.Listen이 성공하면 OS 커널이 즉시 TCP 커넥션을 큐잉하기 시작한다.
 			// 따라서 별도의 대기(sleep) 없이 바로 return해도 서버는 요청을 받을 준비가 된 상태다.
+			logger.Info("서버 시작", zap.String("port", port))
 			return nil
 		},
 		// OnStop은 앱이 종료될 때(Ctrl+C, SIGTERM 등) 호출된다.
@@ -280,6 +319,7 @@ func startServer(lc fx.Lifecycle, shutdowner fx.Shutdowner, app *fiber.App) {
 		//
 		// ctx는 fx가 전달하는 context로, fx.StopTimeout 만큼의 데드라인이 설정되어 있다.
 		OnStop: func(ctx context.Context) error {
+			logger.Info("서버 종료 중...")
 			return app.ShutdownWithContext(ctx)
 		},
 	})
