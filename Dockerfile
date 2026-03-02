@@ -19,6 +19,11 @@ COPY . .
 # 이렇게 하면 glibc가 없는 초경량 이미지(distroless)에서도 실행 가능하다.
 RUN CGO_ENABLED=0 go build -o server ./cmd/server
 
+# SQLite DB 파일을 저장할 디렉토리를 미리 만든다.
+# distroless 이미지에는 셸(sh)이 없어서 RUN mkdir을 실행할 수 없으므로,
+# 빌드 스테이지에서 만들어서 COPY로 전달하는 우회 기법을 사용한다.
+RUN mkdir -p /data
+
 # ---- 런타임 스테이지 ----
 # distroless는 Google이 만든 초경량 컨테이너 이미지다.
 # 셸, 패키지 매니저 등이 없어 공격 표면이 최소화된다.
@@ -28,6 +33,11 @@ FROM gcr.io/distroless/static:nonroot
 # 빌드 스테이지에서 만든 바이너리만 복사한다.
 # 최종 이미지에는 Go 컴파일러, 소스 코드 등이 포함되지 않는다.
 COPY --from=builder /app/server /server
+
+# SQLite 데이터 디렉토리를 복사한다.
+# --chown=nonroot:nonroot로 비루트 사용자에게 쓰기 권한을 부여한다.
+# 운영 환경에서는 docker run -v /host/data:/data 로 볼륨을 마운트한다.
+COPY --from=builder --chown=nonroot:nonroot /data /data
 
 EXPOSE 42001
 

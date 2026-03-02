@@ -1,0 +1,15 @@
+version: "2"
+# 도메인을 추가할 때마다 아래 sql 배열에 항목을 추가한다.
+# 아키텍처 테스트(make arch)가 repo/에 .sql 파일이 있는데
+# sqlc.yaml에 항목이 없으면 자동으로 감지하여 테스트를 실패시킨다.
+#
+# 예시:
+#   - engine: "sqlite"
+#     queries: "internal/domain/user/subdomain/core/repo/"
+#     schema: "internal/db/migration/"
+#     gen:
+#       go:
+#         package: "repo"
+#         out: "internal/domain/user/subdomain/core/repo/"
+#         emit_interface: true
+sql: []
