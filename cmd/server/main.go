@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/joho/godotenv"
 	// automaxprocs는 우버가 만든 라이브러리로, 앱 시작 시 GOMAXPROCS를 자동으로 설정한다.
@@ -39,6 +40,13 @@ import (
 // 설정, 로거, 서버, 에러 처리, 검증 등 핵심 로직은 internal/app 패키지에 있다.
 // 이렇게 분리하면 테스트(internal/testutil)에서도 동일한 DI 그래프를 재사용할 수 있다.
 func main() {
+	// 서버 전체의 기본 타임존을 UTC로 고정한다.
+	// time.Local은 Go의 전역 타임존 설정으로,
+	// time.Now()가 반환하는 시간의 기준 시간대를 결정한다.
+	// UTC로 고정하면 서버가 어느 리전(한국, 미국 등)에서 실행되든 동일한 시간을 사용한다.
+	// NestJS에서 dayjs.tz.setDefault('UTC')와 비슷한 개념이다.
+	time.Local = time.UTC
+
 	// .env 파일에서 환경변수를 로드한다.
 	// NestJS의 ConfigModule.forRoot()와 비슷한 역할이다.
 	//
