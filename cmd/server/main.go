@@ -99,19 +99,6 @@ func main() {
 			return db.NewDB(lc, logger, cfg.DBPath)
 		}),
 
-		// DB 초기화를 강제한다.
-		// fx는 "누군가 요청할 때만" Provider를 실행하는 지연 초기화(lazy init) 방식이다.
-		// 아직 *sql.DB를 사용하는 곳이 없으므로, Invoke로 강제 초기화한다.
-		// 나중에 도메인 서비스가 *sql.DB를 주입받으면 이 줄은 제거할 수 있다.
-		//
-		// NestJS에서는 모듈이 로드되면 모든 Provider가 자동 초기화되지만,
-		// fx는 "필요한 것만" 초기화하는 방식이다. 이 차이를 이해하는 것이 중요하다.
-		//
-		// func(_ *sql.DB) {}는 익명 함수(anonymous function)로,
-		// *sql.DB를 인자로 받지만 아무것도 하지 않는다.
-		// fx는 이 함수의 인자 타입을 보고 *sql.DB Provider를 실행한다.
-		fx.Invoke(func(_ *sql.DB) {}),
-
 		// startServer 함수를 호출한다.
 		// fx.Invoke()에 등록된 함수는 앱 시작 시 자동 실행된다.
 		// 매개변수(fx.Lifecycle, *fiber.App 등)는 DI 컨테이너에서 자동으로 주입받는다.
