@@ -7,6 +7,7 @@ import (
 	"net"
 
 	"github.com/bytedance/sonic"
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/compress"
 	"github.com/gofiber/fiber/v3/middleware/cors"
@@ -117,6 +118,47 @@ func newFiberApp(cfg *config.Config, logger *zap.Logger, database *sql.DB) *fibe
 	registerHealthRoutes(app, database)
 
 	return app
+}
+
+// newHumaConfig는 huma API 설정을 생성한다.
+// OpenAPI 문서의 기본 정보와 Scalar UI 설정을 포함한다.
+//
+// NestJS에서 SwaggerModule.setup(app, {
+//
+//	title: 'REST API',
+//	version: '1.0.0',
+//	...
+//
+// })으로 Swagger 설정을 하는 것과 같다.
+func newHumaConfig() huma.Config {
+	config := huma.DefaultConfig("REST API", "1.0.0")
+
+	// Scalar를 API 문서 UI로 사용한다.
+	// huma는 Scalar, Stoplight Elements, Swagger UI를 내장 지원한다.
+	// Scalar는 모던한 디자인과 OpenAPI 3.1 완벽 지원이 장점이다.
+	config.DocsRenderer = huma.DocsRendererScalar
+
+	// /docs 경로에서 Scalar UI를 제공한다.
+	// NestJS에서 SwaggerModule.setup(app, { path: 'docs' })과 같다.
+	config.DocsPath = "/docs"
+
+	// /openapi 접두사로 스펙 파일을 제공한다.
+	// /openapi.json, /openapi.yaml 경로가 자동 생성된다.
+	config.OpenAPIPath = "/openapi"
+
+	// JSON Schema 경로
+	config.SchemasPath = "/schemas"
+
+	return config
+}
+
+// newHumaAPI는 Fiber 앱을 감싸서 huma API 인스턴스를 생성한다.
+// fx.Provide에 등록하여 DI 컨테이너가 huma.API를 자동 주입하게 한다.
+//
+// 반환 타입이 huma.API(인터페이스)인 점에 주의.
+// 외부에서 구현 세부사항(fiberAdapter)에 의존하지 않게 된다.
+func newHumaAPI(app *fiber.App) huma.API {
+	return NewHumaAPI(app, newHumaConfig())
 }
 
 // setupMiddleware는 보안 및 유틸리티 미들웨어를 등록한다.

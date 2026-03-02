@@ -62,6 +62,14 @@ func AppModule() fx.Option {
 		// 다른 곳에서 *fiber.App을 요청하면 이 함수를 호출해서 주입한다.
 		fx.Provide(newFiberApp),
 
+		// huma API 인스턴스를 DI에 등록한다.
+		// huma.API 타입이 필요한 곳(핸들러의 RegisterRoutes)에 자동 주입된다.
+		// newHumaAPI는 *fiber.App을 받아 huma.API를 반환하므로,
+		// fx가 위에서 등록한 *fiber.App을 자동으로 주입한다.
+		//
+		// NestJS에서 SwaggerModule을 imports에 등록하는 것과 같다.
+		fx.Provide(newHumaAPI),
+
 		// db.NewDB를 DI 컨테이너에 직접 등록한다.
 		// *sql.DB 타입이 필요한 곳에 자동으로 주입된다.
 		// NewDB 내부에서 SQLite 연결 생성 -> PRAGMA 설정까지 처리한다.
