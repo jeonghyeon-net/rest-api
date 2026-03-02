@@ -85,22 +85,22 @@ var (
 // logger를 클로저로 캡처하여 에러 발생 시 구조화된 로그를 남길 수 있다.
 func newErrorHandler(logger *zap.Logger) func(fiber.Ctx, error) error {
 	return func(c fiber.Ctx, err error) error {
-		// errors.As는 에러 체인에서 특정 타입의 에러를 찾는 Go 1.13+ 함수다.
+		// errors.AsType은 에러 체인에서 특정 타입의 에러를 찾는 Go 1.23+ 제네릭 함수다.
+		// 기존 errors.As와 같은 역할이지만, 변수를 미리 선언할 필요 없이
+		// 타입 파라미터로 바로 추출할 수 있어 코드가 간결하다.
 		// NestJS에서 instanceof로 에러 타입을 확인하는 것과 비슷하다.
 		//
 		// Go에서는 에러를 fmt.Errorf("...: %w", err)로 감싸는(wrap) 패턴이 일반적인데,
-		// errors.As는 감싸진 에러 안에서도 원래 타입을 찾아낸다.
+		// errors.AsType은 감싸진 에러 안에서도 원래 타입을 찾아낸다.
 		// (TypeScript에서는 에러 체인 개념이 없어서 직접 대응되는 기능이 없다)
 
 		// 1) AppError: 비즈니스 로직에서 의도적으로 반환한 에러
-		var appErr *AppError
-		if errors.As(err, &appErr) {
+		if appErr, ok := errors.AsType[*AppError](err); ok {
 			return c.Status(appErr.Status).JSON(appErr)
 		}
 
 		// 2) Fiber 내장 에러: 라우트 미매칭(404), 바디 파싱 실패 등
-		var fiberErr *fiber.Error
-		if errors.As(err, &fiberErr) {
+		if fiberErr, ok := errors.AsType[*fiber.Error](err); ok {
 			return c.Status(fiberErr.Code).JSON(&AppError{
 				Code:    "FIBER_ERROR",
 				Message: fiberErr.Message,
@@ -109,8 +109,7 @@ func newErrorHandler(logger *zap.Logger) func(fiber.Ctx, error) error {
 
 		// 3) 검증 에러: go-playground/validator가 반환하는 필드별 검증 실패
 		//    NestJS의 ValidationPipe가 class-validator 에러를 변환하는 것과 유사하다.
-		var validationErrors validator.ValidationErrors
-		if errors.As(err, &validationErrors) {
+		if validationErrors, ok := errors.AsType[validator.ValidationErrors](err); ok {
 			// 각 필드의 검증 실패 정보를 배열로 변환한다.
 			details := make([]map[string]string, 0, len(validationErrors))
 			for _, fe := range validationErrors {
