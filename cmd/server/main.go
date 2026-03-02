@@ -34,7 +34,7 @@ func main() {
 	// godotenv.Load()는 .env 파일이 없으면 에러를 반환하지만,
 	// 운영 환경에서는 .env 파일 없이 실제 환경변수를 사용하므로 에러를 무시한다.
 	// (Docker, K8s 등에서 환경변수를 직접 주입하는 것이 일반적)
-	_ = godotenv.Load()
+	godotenv.Load() //nolint:errcheck,gosec // .env 파일 없는 운영 환경에서는 에러 무시
 
 	fx.New(
 		// fx.StopTimeout은 앱 종료 시 OnStop 훅들이 완료될 때까지 기다리는 최대 시간이다.
@@ -239,7 +239,7 @@ func startServer(lc fx.Lifecycle, shutdowner fx.Shutdowner, app *fiber.App) {
 					// 서버가 비정상적으로 종료된 경우 fx 앱 전체를 gracefully 종료한다.
 					// shutdowner.Shutdown() 호출 시 모든 OnStop 훅이 역순으로 실행된다.
 					fmt.Printf("서버 에러: %v\n", err)
-					shutdowner.Shutdown() //nolint:errcheck
+					_ = shutdowner.Shutdown() //nolint:errcheck // 이미 에러 상태에서 종료 시도이므로 추가 에러 처리 불필요
 				}
 			}()
 

@@ -1,0 +1,244 @@
+# golangci-lint v2 설정 파일
+# 방침: "최대한 꼼꼼하게" — 노이즈가 확인된 규칙만 선별적으로 비활성화한다.
+version: "2"
+
+linters:
+  # default: none으로 설정하면 모든 린터를 비활성화한 뒤 enable 목록만 활성화한다.
+  # 암묵적으로 켜지는 린터 없이, 정확히 어떤 검사가 돌아가는지 명시적으로 관리한다.
+  default: none
+
+  enable:
+    # ===================================================================
+    # 필수 린터 (모든 Go 프로젝트 공통)
+    # ===================================================================
+
+    # errcheck: 에러 반환값을 무시하는 코드를 찾는다.
+    # Go에서 err를 체크하지 않는 것은 NestJS에서 try-catch 없이 await하는 것과 같다.
+    - errcheck
+
+    # govet: Go 컴파일러 팀이 만든 정적 분석 도구. 컴파일은 되지만 버그일 가능성이 높은 코드를 찾는다.
+    # 예: printf 포맷 문자열 불일치, 구조체 복사 시 lock 복사, 도달 불가능한 코드 등
+    - govet
+
+    # staticcheck: Go 커뮤니티 표준 정적 분석 도구.
+    # govet보다 넓은 범위의 버그, 성능 문제, 사용되지 않는 코드를 찾는다.
+    - staticcheck
+
+    # ineffassign: 이후에 사용되지 않는 변수 할당을 찾는다.
+    # 예: err = doSomething() 후 err를 체크하지 않고 덮어쓰는 경우
+    - ineffassign
+
+    # unused: 사용되지 않는 함수, 변수, 타입, 상수를 찾는다.
+    # 죽은 코드(dead code)를 정리하는 데 유용하다.
+    - unused
+
+    # ===================================================================
+    # 에러 처리 린터 — Go에서 에러 처리는 가장 중요한 관례다
+    # ===================================================================
+
+    # errorlint: Go 1.13+ 에러 래핑/비교 패턴의 올바른 사용을 검사한다.
+    # errors.Is(), errors.As()를 사용해야 하는데 == 비교를 하는 경우를 찾는다.
+    # NestJS의 instanceof 체크 대신 Go는 errors.Is()를 써야 한다.
+    - errorlint
+
+    # nilerr: if err != nil 블록 안에서 nil을 반환하는 실수를 찾는다.
+    # 예: if err != nil { return nil } ← 에러를 삼켜버리는 코드
+    - nilerr
+
+    # ===================================================================
+    # 스타일/품질 린터
+    # ===================================================================
+
+    # revive: golint의 후속 린터. Go 커뮤니티 스타일 규칙을 검사한다.
+    - revive
+
+    # gocritic: 다양한 코드 패턴 검사 (불필요한 타입 변환, 단순화 가능한 코드 등)
+    - gocritic
+
+    # goconst: 반복되는 문자열/숫자 리터럴을 찾아 상수로 추출하라고 제안한다.
+    - goconst
+
+    # unconvert: 불필요한 타입 변환을 찾는다. 예: int(myInt) (이미 int인 경우)
+    - unconvert
+
+    # misspell: 주석과 문자열의 영어 오타를 찾는다.
+    - misspell
+
+    # whitespace: 함수 시작/끝의 불필요한 빈 줄을 찾는다.
+    - whitespace
+
+    # dupword: 주석에서 중복된 단어를 찾는다. 예: "the the"
+    - dupword
+
+    # ===================================================================
+    # 버그 방지 린터 — 컴파일은 되지만 런타임에 문제를 일으키는 패턴
+    # ===================================================================
+
+    # durationcheck: time.Duration 연산 실수를 찾는다.
+    # 예: time.Duration(1) * time.Second ← 1나노초 * 1초 = 1초 (의도와 다를 수 있음)
+    # NestJS에서는 ms 단위 숫자만 쓰지만, Go에서는 Duration 타입을 이해해야 한다.
+    - durationcheck
+
+    # forcetypeassert: 안전하지 않은 타입 단언(type assertion)을 찾는다.
+    # 예: val := m["key"].(string) ← key가 없거나 타입이 다르면 panic 발생
+    #     val, ok := m["key"].(string) ← 안전한 방식 (ok로 확인)
+    # NestJS의 as unknown as string처럼 위험한 캐스팅을 잡아준다.
+    - forcetypeassert
+
+    # exhaustive: switch문에서 enum(iota 상수)의 모든 case를 처리했는지 검사한다.
+    # NestJS/TypeScript의 exhaustive check(never 타입 활용)와 같은 개념이다.
+    # 새 상수를 추가했는데 switch문에 case를 빠뜨리면 바로 알 수 있다.
+    - exhaustive
+
+    # nakedret: 큰 함수에서 이름 있는 반환값(named return)을 그냥 return하는 코드를 찾는다.
+    # 예: func foo() (result string, err error) { ... return } ← 뭘 반환하는지 불명확
+    # 함수가 길어지면 named return이 어떤 값인지 추적이 어려워 버그를 유발한다.
+    - nakedret
+
+    # containedctx: 구조체 필드에 context.Context를 저장하는 코드를 찾는다.
+    # context.Context는 함수 인자로 전달해야 하며, 구조체에 저장하면 생명주기 관리가 꼬인다.
+    # Go 공식 문서에서도 "Do not store Contexts inside a struct type"이라고 명시한다.
+    - containedctx
+
+    # asasalint: []any를 ...any 파라미터에 잘못 전달하는 실수를 찾는다.
+    # 예: fmt.Println([]any{1,2,3}...) vs fmt.Println([]any{1,2,3})
+    - asasalint
+
+    # reassign: 패키지 레벨 변수가 예기치 않게 재할당되는 것을 찾는다.
+    # 전역 변수 변경은 의도치 않은 사이드 이펙트를 유발한다.
+    - reassign
+
+    # wastedassign: 사용되지 않는 할당을 찾는다 (ineffassign보다 넓은 범위).
+    - wastedassign
+
+    # ===================================================================
+    # 성능 린터
+    # ===================================================================
+
+    # perfsprint: fmt.Sprintf 대신 더 빠른 대안을 제안한다.
+    # 예: fmt.Sprintf("%d", n) → strconv.Itoa(n) (약 3배 빠름)
+    - perfsprint
+
+    # prealloc: append를 반복 호출하는 슬라이스에 make([]T, 0, cap) 사전 할당을 제안한다.
+    # 사전 할당하면 내부적으로 배열 확장(re-allocation)이 줄어 성능이 개선된다.
+    - prealloc
+
+    # usestdlibvars: 표준 라이브러리에 이미 정의된 상수 사용을 권장한다.
+    # 예: "GET" 대신 http.MethodGet, 200 대신 http.StatusOK
+    # REST API에서 매직 넘버/문자열 대신 의미가 명확한 상수를 사용하게 해준다.
+    - usestdlibvars
+
+    # ===================================================================
+    # 보안 린터
+    # ===================================================================
+
+    # gosec: Go 코드의 보안 취약점을 찾는다 (하드코딩된 비밀번호, SQL 인젝션 등).
+    # REST API 프로젝트에서 필수.
+    - gosec
+
+    # ===================================================================
+    # HTTP/DB 리소스 관리 린터
+    # ===================================================================
+
+    # bodyclose: HTTP 응답의 Body를 Close()하지 않는 코드를 찾는다.
+    # 리소스 누수(resource leak)를 방지한다.
+    - bodyclose
+
+    # sqlclosecheck: database/sql의 Rows, Stmt 등을 Close()하지 않는 코드를 찾는다.
+    # DB 커넥션 풀 고갈을 방지한다.
+    - sqlclosecheck
+
+    # ===================================================================
+    # nolint 규율
+    # ===================================================================
+
+    # nolintlint: //nolint 주석의 올바른 사용을 강제한다.
+    # //nolint 사용 시 반드시 이유를 적도록 한다.
+    # 예: //nolint:errcheck // 이 에러는 의도적으로 무시한다
+    - nolintlint
+
+  settings:
+    revive:
+      rules:
+        # exported 규칙 비활성화: 모든 공개(exported) 함수/타입에 주석을 강제하는 규칙.
+        # 이 프로젝트는 한국어 주석을 자유롭게 작성하므로, godoc 형식 강제는 불필요하다.
+        - name: exported
+          disabled: true
+
+    govet:
+      # 모든 govet 분석기를 활성화한다.
+      # shadow, nilness, unusedwrite 등 기본으로 꺼져있는 유용한 검사를 모두 켠다.
+      #
+      # shadow 검사가 특히 중요하다:
+      # 외부 스코프의 변수를 내부 스코프에서 같은 이름으로 재선언하는 경우를 찾는다.
+      # 예: err := outerFunc()  →  if err := innerFunc(); err != nil { ... }
+      #     이 경우 외부 err가 의도치 않게 가려진다 (shadowed).
+      # Go 초심자가 가장 많이 겪는 실수 중 하나다.
+      enable-all: true
+
+    staticcheck:
+      # 모든 staticcheck 검사를 활성화하되, godoc 스타일 규칙만 제외한다.
+      # ST1000: 패키지 주석 형식, ST1020/21/22: exported 엔티티 주석 형식
+      # 이 프로젝트는 한국어 주석을 사용하므로 영문 godoc 형식은 맞지 않는다.
+      checks:
+        - all
+        - -ST1000
+        - -ST1020
+        - -ST1021
+        - -ST1022
+
+    errcheck:
+      # 타입 단언에서 에러 체크 여부도 검사한다.
+      # 예: val := x.(string) ← ok 변수 없이 사용하면 경고
+      check-type-assertions: true
+      # _ = fn() 형태로 에러를 빈칸에 할당하는 것도 찾는다.
+      check-blank: true
+
+    goconst:
+      # 같은 문자열이 3번 이상 반복되면 상수 추출을 제안한다.
+      min-occurrences: 3
+
+    nakedret:
+      # 함수 길이가 5줄을 초과하면 naked return을 금지한다.
+      # 짧은 함수에서는 named return이 충분히 명확하므로 허용.
+      max-func-lines: 5
+
+    nolintlint:
+      # //nolint 사용 시 반드시 린터 이름을 명시하도록 강제한다.
+      # 예: //nolint:errcheck ← OK, //nolint ← 금지 (어떤 린터를 끄는지 불명확)
+      require-specific: true
+
+    exhaustive:
+      # default case가 있으면 누락된 case를 허용한다.
+      # switch에 default:가 있으면 "나머지 경우를 처리한다"는 의미이므로 OK.
+      default-signifies-exhaustive: true
+
+    perfsprint:
+      # fmt.Errorf는 에러 래핑(%w)에 쓰이므로 제외한다.
+      err-error: false
+
+  exclusions:
+    # golangci-lint v2 내장 프리셋: 흔한 오탐(false positive)을 자동으로 제외한다.
+    # - common-false-positives: 일반적인 오탐 패턴
+    # - std-error-handling: 표준 에러 처리 패턴 (err.Error() 등)
+    presets:
+      - common-false-positives
+      - std-error-handling
+
+    # 특정 경로를 린트 검사에서 제외한다.
+    paths:
+      # 아키텍처 테스트 코드: go/ast 파싱 도구이므로 일반 애플리케이션 규칙이 맞지 않는 부분이 있다.
+      - test/architecture
+
+issues:
+  # 린터당 이슈 수 제한을 없앤다. 모든 이슈를 빠짐없이 보여준다.
+  # 기본값은 50개인데, 50개를 넘기면 나머지가 숨겨져 문제를 놓칠 수 있다.
+  max-issues-per-linter: 0
+  # 같은 종류의 이슈 수 제한도 없앤다.
+  max-same-issues: 0
+
+formatters:
+  enable:
+    # gofumpt: gofmt의 상위 호환 포매터. gofmt 규칙에 추가 정리 규칙을 적용한다.
+    # 예: 불필요한 빈 줄 제거, 함수 인자 정렬 등.
+    - gofumpt
