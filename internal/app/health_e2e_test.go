@@ -26,7 +26,7 @@
 //
 // //go:build e2e 빌드 태그에 의해 일반 테스트(go test)에는 포함되지 않는다.
 // go test -tags=e2e로 명시적으로 실행해야 한다.
-package main_test
+package app_test
 
 import (
 	"database/sql"
