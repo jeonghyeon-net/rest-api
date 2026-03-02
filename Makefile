@@ -1,7 +1,7 @@
 .PHONY: build run dev clean arch setup docker
 
 build:
-	go build -o tmp/main .
+	go build -o tmp/main ./cmd/server
 
 run: build
 	./tmp/main

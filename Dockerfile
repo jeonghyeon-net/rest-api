@@ -17,7 +17,7 @@ COPY . .
 
 # CGO_ENABLED=0: C 라이브러리 의존성 없이 순수 Go 바이너리를 만든다.
 # 이렇게 하면 glibc가 없는 초경량 이미지(distroless)에서도 실행 가능하다.
-RUN CGO_ENABLED=0 go build -o server .
+RUN CGO_ENABLED=0 go build -o server ./cmd/server
 
 # ---- 런타임 스테이지 ----
 # distroless는 Google이 만든 초경량 컨테이너 이미지다.
