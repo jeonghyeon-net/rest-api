@@ -8,7 +8,14 @@
 # .PHONY는 Make에게 "이 이름들은 파일이 아니라 명령어 이름"이라고 알려준다.
 # 만약 프로젝트에 build라는 이름의 파일이 있으면, Make는 이미 최신이라고 판단하여
 # 명령을 실행하지 않는다. .PHONY로 선언하면 항상 실행된다.
-.PHONY: build run dev clean test arch setup docker fmt lint sqlc-gen migrate-new migrate-up migrate-down migrate-status
+.PHONY: build run dev clean test e2e test-all arch setup docker fmt lint sqlc-gen migrate-new migrate-up migrate-down migrate-status
+
+# .env 파일이 있으면 환경변수로 로드한다.
+# 앞에 - 를 붙이면 파일이 없어도 에러가 발생하지 않는다.
+# NestJS에서 dotenv가 .env를 자동 로드하는 것과 같은 역할이다.
+# 이렇게 하면 .env에 정의된 DB_PATH 등이 Makefile 변수로 설정되어,
+# 아래의 ?= 기본값보다 우선한다.
+-include .env
 
 # ── 변수 ────────────────────────────────────────────────────────────────────
 
@@ -69,6 +76,23 @@ lint:
 # NestJS의 npm run test (jest)와 같은 역할이다.
 test:
 	go test $$(go list ./... | grep -v test/architecture) -count=1
+
+# E2E(통합) 테스트를 실행한다.
+# -tags=e2e 빌드 태그가 있는 테스트 파일만 컴파일하여 실행한다.
+# 아키텍처 테스트는 제외한다 (make arch로 별도 실행).
+# in-memory SQLite를 사용하므로 외부 인프라 없이 실행 가능하다.
+# NestJS의 npm run test:e2e와 같은 역할이다.
+e2e:
+	go test -tags=e2e $$(go list ./... | grep -v test/architecture) -count=1
+
+# 유닛 테스트 + E2E 테스트 + 아키텍처 테스트를 모두 실행한다.
+# CI 파이프라인에서 사용하거나, push 전 전체 검증에 사용한다.
+# $(MAKE)는 재귀적 make 호출로, 각 타겟을 순서대로 실행한다.
+# NestJS의 npm run test:all과 같은 역할이다.
+test-all:
+	$(MAKE) test
+	$(MAKE) e2e
+	$(MAKE) arch
 
 # 아키텍처 규칙 준수 여부를 자동 검증한다.
 # test/architecture/ 디렉터리의 테스트가 DDD 레이어 의존성, 네이밍 규칙,

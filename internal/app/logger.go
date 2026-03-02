@@ -1,9 +1,16 @@
-package main
+package app
 
-import "go.uber.org/zap"
+import (
+	"go.uber.org/zap"
+
+	"rest-api/internal/config"
+)
 
 // newLogger는 환경에 따라 적절한 zap 로거를 생성한다.
-// fx.Provide()에 의해 DI 컨테이너에 등록되며, *zap.Logger 타입이 필요한 곳에 자동 주입된다.
+// AppModule 내에서 fx.Provide()로 등록되며, *zap.Logger 타입이 필요한 곳에 자동 주입된다.
+//
+// 소문자로 시작하므로 패키지 외부에서 접근할 수 없다(unexported/비공개).
+// AppModule() 내부에서만 사용되므로 비공개로 유지한다.
 //
 // zap은 우버가 만든 구조화된(structured) 로깅 라이브러리다.
 // fmt.Printf와 달리 JSON 형태로 로그를 출력하여, DataDog, ELK 등 로그 수집 시스템에서
@@ -16,7 +23,7 @@ import "go.uber.org/zap"
 // 환경별 동작:
 //   - development: 사람이 읽기 쉬운 컬러 로그 (zap.NewDevelopment)
 //   - production:  JSON 구조화 로그 (zap.NewProduction)
-func newLogger(cfg *Config) (*zap.Logger, error) {
+func newLogger(cfg *config.Config) (*zap.Logger, error) {
 	if cfg.AppEnv == "production" {
 		// 프로덕션: JSON 형태의 구조화 로그
 		// 예: {"level":"error","ts":1709369400,"msg":"서버 에러","port":"42001"}

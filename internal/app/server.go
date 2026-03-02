@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -16,14 +16,16 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/requestid"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
+
+	"rest-api/internal/config"
 )
 
 // newFiberApp은 Fiber 애플리케이션 인스턴스를 생성하고 라우트를 등록한다.
-// fx.Provide()에 의해 DI 컨테이너에 등록되며,
+// AppModule 내에서 fx.Provide()로 등록되며,
 // *fiber.App 타입이 필요한 곳에 자동으로 주입된다.
 //
 // NestJS에서 Express/Fastify 인스턴스를 설정하는 것과 비슷하다.
-func newFiberApp(cfg *Config, logger *zap.Logger, database *sql.DB) *fiber.App {
+func newFiberApp(cfg *config.Config, logger *zap.Logger, database *sql.DB) *fiber.App {
 	// fiber.New()로 새로운 Fiber 앱을 생성한다.
 	// NestJS의 NestFactory.create()에서 내부적으로 Express 인스턴스를 만드는 것과 같다.
 	//
@@ -85,7 +87,7 @@ func newFiberApp(cfg *Config, logger *zap.Logger, database *sql.DB) *fiber.App {
 
 		// StructValidator: 요청 바디를 구조체로 파싱한 뒤 자동으로 검증을 실행한다.
 		// NestJS의 app.useGlobalPipes(new ValidationPipe())과 같은 역할이다.
-		// c.Bind().Body(&req) 호출 시 파싱 → 검증이 한 번에 이루어진다.
+		// c.Bind().Body(&req) 호출 시 파싱 -> 검증이 한 번에 이루어진다.
 		// 검증 규칙은 구조체의 validate 태그로 정의한다.
 		// (예: `validate:"required,email"`)
 		StructValidator: newStructValidator(),
@@ -163,11 +165,14 @@ func setupMiddleware(app *fiber.App) {
 	app.Use(cors.New())
 }
 
-// startServer는 fx.Lifecycle 훅을 사용하여 서버의 시작과 종료를 관리한다.
+// StartServer는 fx.Lifecycle 훅을 사용하여 서버의 시작과 종료를 관리한다.
+//
+// 대문자로 시작하므로 패키지 외부에서 접근 가능하다(exported/공개).
+// main.go에서 fx.Invoke(app.StartServer)로 호출된다.
 //
 // fx.Lifecycle은 NestJS의 OnModuleInit / OnModuleDestroy 라이프사이클 훅과 비슷하다.
-//   - OnStart: 앱 시작 시 호출 → 서버를 고루틴으로 띄운다
-//   - OnStop: 앱 종료 시 호출 → 서버를 gracefully 종료한다
+//   - OnStart: 앱 시작 시 호출 -> 서버를 고루틴으로 띄운다
+//   - OnStop: 앱 종료 시 호출 -> 서버를 gracefully 종료한다
 //
 // 매개변수 lc(fx.Lifecycle)와 app(*fiber.App)은 fx가 DI 컨테이너에서 자동 주입한다.
 // logger(*zap.Logger)는 newLogger가 생성한 로거로, fx가 자동 주입한다.
@@ -176,60 +181,7 @@ func setupMiddleware(app *fiber.App) {
 // 고루틴 안에서 서버 에러가 발생했을 때, Shutdown()을 호출하면
 // fx의 모든 OnStop 훅이 역순으로 실행되며 앱이 gracefully 종료된다.
 // 이것이 fx 공식 문서에서 권장하는 "post-startup 에러 처리" 패턴이다.
-// registerHealthRoutes는 쿠버네티스 스타일의 헬스체크 엔드포인트를 등록한다.
-//
-// 두 가지 엔드포인트를 제공한다:
-//
-//   - GET /livez (Liveness Probe)
-//     프로세스가 살아있는지 확인한다. 응답이 없으면 프로세스가 데드락 상태이므로
-//     쿠버네티스가 파드를 재시작한다.
-//     NestJS에서 @HealthCheck() 데코레이터로 프로세스 생존을 확인하는 것과 같다.
-//
-//   - GET /readyz (Readiness Probe)
-//     애플리케이션이 트래픽을 받을 준비가 되었는지 확인한다.
-//     DB 연결 등 의존성이 정상이면 200, 아니면 503을 반환한다.
-//     503이면 쿠버네티스가 이 파드를 서비스 엔드포인트에서 제거하여
-//     트래픽이 다른 정상 파드로 라우팅된다 (파드를 재시작하지는 않는다).
-//     NestJS에서 TypeOrmHealthIndicator로 DB 연결을 확인하는 것과 같다.
-//
-// 매개변수:
-//   - app: Fiber 앱 인스턴스. 라우트를 등록할 대상이다.
-//   - database: *sql.DB. readyz에서 DB 연결 상태를 확인하기 위해 필요하다.
-func registerHealthRoutes(app *fiber.App, database *sql.DB) {
-	// ─── Liveness Probe ─────────────────────────────────────────────────
-	// 가장 가볍게 구현한다. HTTP 응답을 보낼 수 있다는 것 자체가
-	// 프로세스가 살아있고 이벤트 루프(Go의 경우 고루틴 스케줄러)가
-	// 정상 동작한다는 증거다.
-	//
-	// fiber.StatusOK는 HTTP 200 상태코드 상수다.
-	// Go에서는 매직 넘버(200) 대신 이름이 있는 상수를 사용하는 것이 관례다.
-	app.Get("/livez", func(c fiber.Ctx) error {
-		return c.SendStatus(fiber.StatusOK)
-	})
-
-	// ─── Readiness Probe ────────────────────────────────────────────────
-	// DB에 Ping을 보내서 실제로 쿼리가 가능한 상태인지 확인한다.
-	//
-	// db.PingContext()는 DB 연결 풀에서 연결 하나를 꺼내 서버에 핑을 보내고 반환한다.
-	// context를 받으므로 요청 타임아웃이 자동으로 적용된다.
-	//
-	// 실패하는 경우:
-	//   - DB 파일이 손상된 경우
-	//   - 디스크가 가득 찬 경우
-	//   - 연결 풀이 고갈된 경우 (MaxOpenConns 초과)
-	//
-	// fiber.StatusServiceUnavailable는 HTTP 503 상태코드다.
-	// 503은 "서버가 일시적으로 요청을 처리할 수 없다"는 의미로,
-	// 쿠버네티스가 이 파드를 서비스에서 일시 제외하는 트리거가 된다.
-	app.Get("/readyz", func(c fiber.Ctx) error {
-		if err := database.PingContext(c.Context()); err != nil {
-			return c.SendStatus(fiber.StatusServiceUnavailable)
-		}
-		return c.SendStatus(fiber.StatusOK)
-	})
-}
-
-func startServer(lc fx.Lifecycle, shutdowner fx.Shutdowner, app *fiber.App, logger *zap.Logger, cfg *Config) {
+func StartServer(lc fx.Lifecycle, shutdowner fx.Shutdowner, app *fiber.App, logger *zap.Logger, cfg *config.Config) {
 	// Config 구조체에서 포트를 읽는다.
 	// 이전에는 getEnv("PORT", "42001")를 직접 호출했지만,
 	// 이제 Config에서 일괄 관리하므로 설정 변경이 한 곳에서만 이루어진다.

@@ -1,4 +1,19 @@
-package main
+// Package config는 애플리케이션의 모든 설정을 중앙에서 관리한다.
+//
+// NestJS의 @nestjs/config 모듈(ConfigModule + ConfigService)과 같은 역할이다.
+// 환경변수에서 설정값을 읽어 Config 구조체에 모아두고,
+// fx DI 컨테이너를 통해 애플리케이션 전체에서 주입받아 사용한다.
+//
+// 왜 별도 패키지로 분리하는가?
+// Config를 internal/app 패키지에 두면, internal/db처럼 app을 import할 수 없는
+// 하위 패키지에서 Config를 직접 사용할 수 없다 (순환 의존성 발생).
+// internal/config로 분리하면:
+//
+//	cmd/server → internal/app → internal/config ← internal/db
+//
+// 이처럼 app과 db 모두 config를 import할 수 있어 순환 의존성이 없다.
+// NestJS에서 ConfigModule을 독립 모듈로 만들어 여러 모듈에서 import하는 것과 같다.
+package config
 
 import (
 	"os"
@@ -51,12 +66,15 @@ type Config struct {
 	BodyLimit int
 }
 
-// newConfig는 환경변수에서 설정값을 읽어 Config 구조체를 생성한다.
-// fx.Supply()에 의해 DI 컨테이너에 등록되며, *Config 타입이 필요한 곳에 자동 주입된다.
+// NewConfig는 환경변수에서 설정값을 읽어 Config 구조체를 생성한다.
+// main.go에서 fx 컨테이너 생성 전에 호출되어 fx.Supply()로 등록된다.
+//
+// 대문자로 시작하므로 패키지 외부에서 접근 가능하다(exported/공개).
+// main.go와 testutil 등 외부 패키지에서 호출할 수 있다.
 //
 // 모든 설정은 이 함수에서 한 번에 읽힌다.
 // 환경변수가 없으면 안전한 기본값이 사용된다.
-func newConfig() *Config {
+func NewConfig() *Config {
 	return &Config{
 		AppEnv:          getEnv("APP_ENV", "development"),
 		Port:            getEnv("PORT", "42001"),
