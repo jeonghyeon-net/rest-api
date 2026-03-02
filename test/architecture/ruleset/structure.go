@@ -6,7 +6,7 @@ package ruleset
 // NestJS에서 모든 모듈이 controller, service, module 파일을 갖는 것과 비슷하게,
 // 여기서는 모든 도메인이 정해진 디렉토리 구조를 따라야 한다.
 //
-// 검사하는 5가지 규칙:
+// 검사하는 7가지 규칙:
 //
 // 1. alias.go 존재 여부 (missing-alias)
 //    - 모든 도메인은 alias.go를 가져야 한다.
@@ -22,7 +22,15 @@ package ruleset
 // 4. 핸들러 프로토콜 디렉토리 (invalid-handler-protocol)
 //    - handler/ 안에는 http, grpc, jsonrpc만 허용
 //
-// 5. Saga 디렉토리 구조 (saga-*)
+// 5. subdomain/ 루트에 파일 존재 금지 (file-in-subdomain-root)
+//    - subdomain/ 바로 아래에 .go 파일이 있으면 안 된다.
+//    - 반드시 서브도메인 디렉토리 안에 있어야 한다.
+//
+// 6. saga/ 루트에 파일 존재 금지 (file-in-saga-root)
+//    - internal/saga/ 바로 아래에 .go 파일이 있으면 안 된다.
+//    - 반드시 saga 이름 디렉토리 안에 있어야 한다.
+//
+// 7. Saga 하위 디렉토리 금지 (saga-nested-dir)
 //    - internal/saga/{이름}/ 안에는 .go 파일만 있어야 한다 (하위 디렉토리 금지)
 //    - Saga는 단일 패키지로 유지: 복잡해지면 도메인으로 분리해야 한다는 신호
 

@@ -93,10 +93,10 @@ rest-api/
         │   └── violation.go            # 규칙 위반 보고서 (Violation 구조체)
         └── ruleset/
             ├── config.go               # 프로젝트 설정 + 허용 목록 상수
-            ├── dependency.go           # 의존성 규칙 (6가지: 도메인 4 + Saga 2)
+            ├── dependency.go           # 의존성 규칙 (8가지: 도메인 5 + Saga 3)
             ├── naming.go               # 네이밍 규칙 (5가지)
             ├── interface_pattern.go    # 인터페이스 패턴 규칙 (3가지)
-            └── structure.go            # 디렉토리 구조 규칙 (5가지: 도메인 4 + Saga 1)
+            └── structure.go            # 디렉토리 구조 규칙 (7가지: 도메인 5 + Saga 2)
 ```
 
 ## 의존성 규칙 매트릭스

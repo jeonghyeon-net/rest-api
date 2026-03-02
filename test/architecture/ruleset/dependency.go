@@ -5,7 +5,7 @@ package ruleset
 // DDD(도메인 주도 설계)에서 가장 중요한 규칙은 "의존성 방향"이다.
 // 잘못된 방향으로 의존하면 코드가 서로 얽혀서(커플링) 변경이 어려워진다.
 //
-// 검사하는 6가지 규칙:
+// 검사하는 8가지 규칙:
 //
 // 1. 서브도메인 간 직접 의존 금지 (cross-subdomain)
 //    - 같은 도메인 안의 서브도메인끼리도 직접 import하면 안 된다.
@@ -20,15 +20,20 @@ package ruleset
 //    - 다른 도메인의 내부 패키지를 직접 import하면 안 된다.
 //    - alias.go(도메인 루트)만 사용 가능.
 //
-// 4. 레이어 역방향 의존 금지 (layer-direction)
+// 4. 서브도메인에서 다른 도메인 직접 import 금지 (cross-domain-from-subdomain)
+//    - 서브도메인은 다른 도메인을 직접 import하면 안 된다.
+//
+// 5. 레이어 역방향 의존 금지 (layer-direction)
 //    - model ← repo ← svc 방향으로만 의존 가능.
 //
-// 5. Saga 의존성 규칙 (saga-*)
+// 6. Saga가 도메인 내부 import 금지 (saga-internal-import)
 //    - Saga는 도메인의 alias.go만 import 가능.
 //    - Saga가 도메인 내부(subdomain, svc 등)를 직접 import하면 안 된다.
+//
+// 7. Saga 간 직접 의존 금지 (saga-cross-saga)
 //    - Saga끼리 서로 import하면 안 된다 (각 Saga는 독립적).
 //
-// 6. 서브도메인에서 Saga import 금지 (subdomain-imports-saga)
+// 8. 서브도메인에서 Saga import 금지 (subdomain-imports-saga)
 //    - 서브도메인은 Saga를 import할 수 없다.
 //    - Saga 호출은 Public Service 레이어에서만 가능.
 
