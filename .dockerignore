@@ -1,0 +1,31 @@
+# 빌드 컨텍스트에서 제외할 파일들
+# Docker 빌드 시 불필요한 파일을 제외하여 빌드 속도를 높인다.
+
+# 빌드 산출물
+tmp/
+bin/
+
+# Git
+.git
+.gitignore
+.githooks
+
+# IDE / 에디터
+.vscode
+.idea
+*.swp
+*.swo
+
+# 테스트
+test/
+*_test.go
+
+# 문서
+*.md
+LICENSE
+
+# 개발 도구 설정
+.air.toml
+.mise.toml
+.golangci.yml
+.claude
