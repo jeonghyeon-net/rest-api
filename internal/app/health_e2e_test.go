@@ -48,18 +48,11 @@ import (
 // fx, Fiber 등이 내부적으로 goroutine을 생성하므로,
 // 테스트 정리(cleanup)가 제대로 되는지 검증하는 데 유용하다.
 func TestMain(m *testing.M) {
-	// goleak.IgnoreTopFunction()으로 특정 goroutine을 무시 목록에 추가한다.
-	// fasthttp(Fiber의 기반 라이브러리)는 내부적으로 updateServerDate goroutine을
-	// 생성하여 HTTP Date 헤더를 주기적으로 갱신한다.
-	// 이 goroutine은 fasthttp가 관리하는 것으로, 우리 코드의 누수가 아니다.
-	// 무시하지 않으면 모든 Fiber 테스트에서 false positive가 발생한다.
-	goleak.VerifyTestMain(m,
-		// fasthttp.updateServerDate의 내부 goroutine을 무시한다.
-		// 이 goroutine은 time.Sleep 루프로 Date 헤더를 갱신하므로
-		// 스택 최상단이 time.Sleep이다.
-		// IgnoreAnyFunction은 스택 어디에든 해당 함수가 있으면 무시한다.
-		goleak.IgnoreAnyFunction("github.com/valyala/fasthttp.updateServerDate.func1"),
-	)
+	// testutil.GoleakOptions에 정의된 공용 무시 목록을 사용한다.
+	// fasthttp 등 프레임워크가 생성하는 goroutine은 우리 코드의 누수가 아니므로
+	// 한 곳(testutil)에서 관리하여 각 테스트 패키지에서 중복 정의를 방지한다.
+	// ... 연산자로 슬라이스를 가변 인자로 전개(spread)한다.
+	goleak.VerifyTestMain(m, testutil.GoleakOptions...)
 }
 
 // HealthE2ESuite는 헬스체크 E2E 테스트를 묶는 테스트 스위트다.
