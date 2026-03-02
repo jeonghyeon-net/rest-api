@@ -29,6 +29,6 @@ FROM gcr.io/distroless/static:nonroot
 # 최종 이미지에는 Go 컴파일러, 소스 코드 등이 포함되지 않는다.
 COPY --from=builder /app/server /server
 
-EXPOSE 3000
+EXPOSE 42001
 
 ENTRYPOINT ["/server"]

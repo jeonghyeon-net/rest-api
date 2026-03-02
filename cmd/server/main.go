@@ -205,8 +205,8 @@ func getEnv(key, fallback string) string {
 // fx의 모든 OnStop 훅이 역순으로 실행되며 앱이 gracefully 종료된다.
 // 이것이 fx 공식 문서에서 권장하는 "post-startup 에러 처리" 패턴이다.
 func startServer(lc fx.Lifecycle, shutdowner fx.Shutdowner, app *fiber.App) {
-	// 환경변수에서 포트를 읽는다. 없으면 기본값 3000을 사용한다.
-	port := getEnv("PORT", "3000")
+	// 환경변수에서 포트를 읽는다. 없으면 기본값 42001을 사용한다.
+	port := getEnv("PORT", "42001")
 
 	lc.Append(fx.Hook{
 		// OnStart는 앱이 시작될 때 호출된다.
