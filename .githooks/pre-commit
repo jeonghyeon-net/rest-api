@@ -6,7 +6,7 @@
 #   1. make fmt  - 코드 포맷 자동 수정 (gofmt + golangci-lint fmt) + 재스테이징
 #   2. make lint - 정적 분석 (golangci-lint + nilaway)
 #
-# 참고: 빌드 검증(make build)과 아키텍처 규칙 검증(make arch)은
+# 참고: 빌드 검증(make build), 유닛 테스트(make test), 아키텍처 규칙 검증(make arch)은
 #       pre-push 훅에서 실행된다. (push 전에 한 번만 검증하여 커밋 속도를 높인다)
 #
 # 이 훅은 .githooks/ 디렉토리에 저장되어 git으로 버전 관리된다.

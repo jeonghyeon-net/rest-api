@@ -8,7 +8,7 @@
 # .PHONY는 Make에게 "이 이름들은 파일이 아니라 명령어 이름"이라고 알려준다.
 # 만약 프로젝트에 build라는 이름의 파일이 있으면, Make는 이미 최신이라고 판단하여
 # 명령을 실행하지 않는다. .PHONY로 선언하면 항상 실행된다.
-.PHONY: build run dev clean arch setup docker fmt lint sqlc-gen migrate-new migrate-up migrate-down migrate-status
+.PHONY: build run dev clean test arch setup docker fmt lint sqlc-gen migrate-new migrate-up migrate-down migrate-status
 
 # ── 변수 ────────────────────────────────────────────────────────────────────
 
@@ -61,6 +61,14 @@ fmt:
 lint:
 	golangci-lint run
 	nilaway -exclude-errors-in-files="test/architecture" ./...
+
+# 아키텍처 테스트를 제외한 모든 유닛 테스트를 실행한다.
+# ./... 패턴은 현재 모듈의 모든 패키지를 의미한다.
+# -count=1은 테스트 캐시를 무시하고 항상 새로 실행하게 한다.
+# grep -v로 test/architecture 패키지를 제외한다 (아키텍처 검증은 make arch로 별도 실행).
+# NestJS의 npm run test (jest)와 같은 역할이다.
+test:
+	go test $$(go list ./... | grep -v test/architecture) -count=1
 
 # 아키텍처 규칙 준수 여부를 자동 검증한다.
 # test/architecture/ 디렉터리의 테스트가 DDD 레이어 의존성, 네이밍 규칙,
