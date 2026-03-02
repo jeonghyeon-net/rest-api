@@ -12,4 +12,20 @@ version: "2"
 #         package: "repo"
 #         out: "internal/domain/user/subdomain/core/repo/"
 #         emit_interface: true
-sql: []
+sql:
+  - engine: "sqlite"
+    queries: "internal/domain/todo/subdomain/core/repo/"
+    schema: "internal/db/migration/"
+    gen:
+      go:
+        package: "repo"
+        out: "internal/domain/todo/subdomain/core/repo/"
+        emit_interface: true
+  - engine: "sqlite"
+    queries: "internal/domain/todo/subdomain/tag/repo/"
+    schema: "internal/db/migration/"
+    gen:
+      go:
+        package: "repo"
+        out: "internal/domain/todo/subdomain/tag/repo/"
+        emit_interface: true
