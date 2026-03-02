@@ -1,4 +1,4 @@
-package main
+package app
 
 import "github.com/go-playground/validator/v10"
 
@@ -26,7 +26,7 @@ import "github.com/go-playground/validator/v10"
 //	}
 //
 // 내부 동작:
-//  1. Fiber가 JSON → 구조체로 파싱 (sonic 사용)
+//  1. Fiber가 JSON -> 구조체로 파싱 (sonic 사용)
 //  2. 파싱 성공 시 structValidator.Validate() 자동 호출
 //  3. validate 태그 규칙에 따라 필드별 검증
 //  4. 실패 시 validator.ValidationErrors 반환

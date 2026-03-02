@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"os"
@@ -51,12 +51,15 @@ type Config struct {
 	BodyLimit int
 }
 
-// newConfig는 환경변수에서 설정값을 읽어 Config 구조체를 생성한다.
-// fx.Supply()에 의해 DI 컨테이너에 등록되며, *Config 타입이 필요한 곳에 자동 주입된다.
+// NewConfig는 환경변수에서 설정값을 읽어 Config 구조체를 생성한다.
+// main.go에서 fx 컨테이너 생성 전에 호출되어 fx.Supply()로 등록된다.
+//
+// 대문자로 시작하므로 패키지 외부에서 접근 가능하다(exported/공개).
+// main.go와 testutil 등 외부 패키지에서 호출할 수 있다.
 //
 // 모든 설정은 이 함수에서 한 번에 읽힌다.
 // 환경변수가 없으면 안전한 기본값이 사용된다.
-func newConfig() *Config {
+func NewConfig() *Config {
 	return &Config{
 		AppEnv:          getEnv("APP_ENV", "development"),
 		Port:            getEnv("PORT", "42001"),

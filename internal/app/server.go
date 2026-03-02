@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -19,7 +19,7 @@ import (
 )
 
 // newFiberApp은 Fiber 애플리케이션 인스턴스를 생성하고 라우트를 등록한다.
-// fx.Provide()에 의해 DI 컨테이너에 등록되며,
+// AppModule 내에서 fx.Provide()로 등록되며,
 // *fiber.App 타입이 필요한 곳에 자동으로 주입된다.
 //
 // NestJS에서 Express/Fastify 인스턴스를 설정하는 것과 비슷하다.
@@ -85,7 +85,7 @@ func newFiberApp(cfg *Config, logger *zap.Logger, database *sql.DB) *fiber.App {
 
 		// StructValidator: 요청 바디를 구조체로 파싱한 뒤 자동으로 검증을 실행한다.
 		// NestJS의 app.useGlobalPipes(new ValidationPipe())과 같은 역할이다.
-		// c.Bind().Body(&req) 호출 시 파싱 → 검증이 한 번에 이루어진다.
+		// c.Bind().Body(&req) 호출 시 파싱 -> 검증이 한 번에 이루어진다.
 		// 검증 규칙은 구조체의 validate 태그로 정의한다.
 		// (예: `validate:"required,email"`)
 		StructValidator: newStructValidator(),
@@ -163,19 +163,6 @@ func setupMiddleware(app *fiber.App) {
 	app.Use(cors.New())
 }
 
-// startServer는 fx.Lifecycle 훅을 사용하여 서버의 시작과 종료를 관리한다.
-//
-// fx.Lifecycle은 NestJS의 OnModuleInit / OnModuleDestroy 라이프사이클 훅과 비슷하다.
-//   - OnStart: 앱 시작 시 호출 → 서버를 고루틴으로 띄운다
-//   - OnStop: 앱 종료 시 호출 → 서버를 gracefully 종료한다
-//
-// 매개변수 lc(fx.Lifecycle)와 app(*fiber.App)은 fx가 DI 컨테이너에서 자동 주입한다.
-// logger(*zap.Logger)는 newLogger가 생성한 로거로, fx가 자동 주입한다.
-//
-// fx.Shutdowner는 fx가 자동으로 DI 컨테이너에 등록하는 인터페이스다.
-// 고루틴 안에서 서버 에러가 발생했을 때, Shutdown()을 호출하면
-// fx의 모든 OnStop 훅이 역순으로 실행되며 앱이 gracefully 종료된다.
-// 이것이 fx 공식 문서에서 권장하는 "post-startup 에러 처리" 패턴이다.
 // registerHealthRoutes는 쿠버네티스 스타일의 헬스체크 엔드포인트를 등록한다.
 //
 // 두 가지 엔드포인트를 제공한다:
@@ -229,7 +216,23 @@ func registerHealthRoutes(app *fiber.App, database *sql.DB) {
 	})
 }
 
-func startServer(lc fx.Lifecycle, shutdowner fx.Shutdowner, app *fiber.App, logger *zap.Logger, cfg *Config) {
+// StartServer는 fx.Lifecycle 훅을 사용하여 서버의 시작과 종료를 관리한다.
+//
+// 대문자로 시작하므로 패키지 외부에서 접근 가능하다(exported/공개).
+// main.go에서 fx.Invoke(app.StartServer)로 호출된다.
+//
+// fx.Lifecycle은 NestJS의 OnModuleInit / OnModuleDestroy 라이프사이클 훅과 비슷하다.
+//   - OnStart: 앱 시작 시 호출 -> 서버를 고루틴으로 띄운다
+//   - OnStop: 앱 종료 시 호출 -> 서버를 gracefully 종료한다
+//
+// 매개변수 lc(fx.Lifecycle)와 app(*fiber.App)은 fx가 DI 컨테이너에서 자동 주입한다.
+// logger(*zap.Logger)는 newLogger가 생성한 로거로, fx가 자동 주입한다.
+//
+// fx.Shutdowner는 fx가 자동으로 DI 컨테이너에 등록하는 인터페이스다.
+// 고루틴 안에서 서버 에러가 발생했을 때, Shutdown()을 호출하면
+// fx의 모든 OnStop 훅이 역순으로 실행되며 앱이 gracefully 종료된다.
+// 이것이 fx 공식 문서에서 권장하는 "post-startup 에러 처리" 패턴이다.
+func StartServer(lc fx.Lifecycle, shutdowner fx.Shutdowner, app *fiber.App, logger *zap.Logger, cfg *Config) {
 	// Config 구조체에서 포트를 읽는다.
 	// 이전에는 getEnv("PORT", "42001")를 직접 호출했지만,
 	// 이제 Config에서 일괄 관리하므로 설정 변경이 한 곳에서만 이루어진다.

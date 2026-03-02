@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"fmt"
 
 	"github.com/joho/godotenv"
@@ -21,9 +20,8 @@ import (
 	// 위해 임포트하는 Go 관용 패턴이다. automaxprocs의 init()이 자동으로 GOMAXPROCS를 설정한다.
 	_ "go.uber.org/automaxprocs"
 	"go.uber.org/fx"
-	"go.uber.org/zap"
 
-	"rest-api/internal/db"
+	"rest-api/internal/app"
 )
 
 // main은 애플리케이션의 진입점이다.
@@ -31,15 +29,14 @@ import (
 //
 // NestJS와 비교하면:
 //   - fx.New()는 NestApp.create()와 같은 역할
-//   - fx.Provide()는 @Module()의 providers 배열과 같은 역할
+//   - fx.Supply()는 @Module()의 providers에서 useValue로 값을 등록하는 것과 같은 역할
+//   - app.AppModule()은 @Module()의 imports에 다른 모듈을 넣는 것과 같은 역할
 //   - fx.Invoke()는 모듈이 로드된 후 실행되는 onModuleInit()과 유사
 //   - Run()은 app.listen()과 같은 역할 (graceful shutdown 포함)
 //
-// 파일 구성:
-//   - main.go:   진입점 + fx 조립 (이 파일)
-//   - config.go: 설정 구조체 + 환경변수 로딩
-//   - logger.go: zap 로거 생성
-//   - server.go: Fiber 앱 생성 + 미들웨어 + 서버 시작/종료
+// 이 파일은 진입점 역할만 담당한다.
+// 설정, 로거, 서버, 에러 처리, 검증 등 핵심 로직은 internal/app 패키지에 있다.
+// 이렇게 분리하면 테스트(internal/testutil)에서도 동일한 DI 그래프를 재사용할 수 있다.
 func main() {
 	// .env 파일에서 환경변수를 로드한다.
 	// NestJS의 ConfigModule.forRoot()와 비슷한 역할이다.
@@ -60,7 +57,7 @@ func main() {
 	// fx.Supply()는 이미 생성된 값을 DI 컨테이너에 "그대로" 등록한다.
 	// fx.Provide()가 "생성 함수"를 등록하는 것과 달리,
 	// fx.Supply()는 "이미 만들어진 인스턴스"를 등록한다.
-	cfg := newConfig()
+	cfg := app.NewConfig()
 
 	fx.New(
 		// fx.StopTimeout은 앱 종료 시 OnStop 훅들이 완료될 때까지 기다리는 최대 시간이다.
@@ -69,44 +66,17 @@ func main() {
 
 		// cfg를 DI 컨테이너에 등록한다.
 		// fx.Supply는 이미 생성된 값을 등록하는 함수다.
-		// fx.Provide(newConfig)와 달리, 함수를 호출하지 않고 cfg 인스턴스를 그대로 등록한다.
+		// fx.Provide(app.NewConfig)와 달리, 함수를 호출하지 않고 cfg 인스턴스를 그대로 등록한다.
 		fx.Supply(cfg),
 
-		// newLogger를 DI 컨테이너에 등록한다.
-		// *zap.Logger 타입이 필요한 곳에 자동으로 주입된다.
-		fx.Provide(newLogger),
+		// AppModule()은 로거, Fiber 앱, DB 연결, 마이그레이션 등
+		// 프로덕션에 필요한 모든 DI 의존성을 하나의 fx.Option으로 묶어 제공한다.
+		// NestJS에서 AppModule을 imports에 넣는 것과 같다.
+		app.AppModule(),
 
-		// newFiberApp 함수를 DI 컨테이너에 등록한다.
-		// fx는 이 함수의 반환 타입(*fiber.App)을 보고,
-		// 다른 곳에서 *fiber.App을 요청하면 이 함수를 호출해서 주입한다.
-		fx.Provide(newFiberApp),
-
-		// db.NewDB를 래퍼 함수로 감싸서 DI 컨테이너에 등록한다.
-		// *sql.DB 타입이 필요한 곳에 자동으로 주입된다.
-		// NewDB 내부에서 SQLite 연결 생성 → PRAGMA 설정 → 마이그레이션 실행까지 처리한다.
-		//
-		// db.NewDB는 dbPath 매개변수(string)를 받지만, fx는 string 타입을
-		// 자동으로 주입할 수 없다(어떤 string인지 구별 불가).
-		// 그래서 래퍼 함수에서 *Config를 주입받아 cfg.DBPath를 직접 전달한다.
-		//
-		// NestJS에서 useFactory로 의존성을 주입받아 인스턴스를 생성하는 것과 같다:
-		//   providers: [{
-		//     provide: 'DATABASE',
-		//     useFactory: (config: ConfigService) => new Database(config.get('DB_PATH')),
-		//     inject: [ConfigService],
-		//   }]
-		fx.Provide(func(lc fx.Lifecycle, logger *zap.Logger, cfg *Config) (*sql.DB, error) {
-			return db.NewDB(lc, logger, cfg.DBPath)
-		}),
-
-		// 마이그레이션을 별도 단계로 실행한다.
-		// NewDB와 분리하여 fx.Invoke로 등록하면, *sql.DB가 주입된 후 자동 실행된다.
-		// 테스트에서 fx.Replace로 DB를 교체해도 교체된 DB에 마이그레이션이 실행된다.
-		fx.Invoke(db.RunMigrations),
-
-		// startServer 함수를 호출한다.
+		// StartServer 함수를 호출한다.
 		// fx.Invoke()에 등록된 함수는 앱 시작 시 자동 실행된다.
 		// 매개변수(fx.Lifecycle, *fiber.App 등)는 DI 컨테이너에서 자동으로 주입받는다.
-		fx.Invoke(startServer),
+		fx.Invoke(app.StartServer),
 	).Run()
 }
