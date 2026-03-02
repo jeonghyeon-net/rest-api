@@ -99,6 +99,11 @@ func main() {
 			return db.NewDB(lc, logger, cfg.DBPath)
 		}),
 
+		// 마이그레이션을 별도 단계로 실행한다.
+		// NewDB와 분리하여 fx.Invoke로 등록하면, *sql.DB가 주입된 후 자동 실행된다.
+		// 테스트에서 fx.Replace로 DB를 교체해도 교체된 DB에 마이그레이션이 실행된다.
+		fx.Invoke(db.RunMigrations),
+
 		// startServer 함수를 호출한다.
 		// fx.Invoke()에 등록된 함수는 앱 시작 시 자동 실행된다.
 		// 매개변수(fx.Lifecycle, *fiber.App 등)는 DI 컨테이너에서 자동으로 주입받는다.

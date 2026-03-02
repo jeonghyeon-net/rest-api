@@ -190,16 +190,12 @@ func NewDB(lc fx.Lifecycle, logger *zap.Logger, dbPath string) (*sql.DB, error) 
 		return nil, fmt.Errorf("DB 연결 실패: %w", err)
 	}
 
-	// RunMigrations는 migrate.go에 정의된 함수다.
-	// goose를 사용하여 아직 적용되지 않은 마이그레이션을 순서대로 실행한다.
-	// 앱이 시작될 때마다 자동으로 DB 스키마를 최신 상태로 유지한다.
-	if err := RunMigrations(db); err != nil {
-		// 마이그레이션 실패 시 DB 연결을 정리하고 에러를 반환한다.
-		_ = db.Close()
-		return nil, fmt.Errorf("마이그레이션 실행 실패: %w", err)
-	}
+	logger.Info("SQLite 데이터베이스 연결 완료")
 
-	logger.Info("SQLite 데이터베이스 준비 완료")
+	// 마이그레이션은 이 함수에서 실행하지 않는다.
+	// fx.Invoke(RunMigrations)로 별도 단계에서 실행한다.
+	// 이렇게 분리하면 테스트에서 fx.Replace로 DB를 교체한 후에도
+	// 교체된 DB에 마이그레이션이 정상적으로 실행된다.
 
 	// ─────────────────────────────────────────────────────────────────────
 	// fx.Lifecycle에 종료 훅(OnStop) 등록
