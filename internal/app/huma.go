@@ -305,12 +305,6 @@ func NewHumaAPI(app *fiber.App, cfg huma.Config) huma.API {
 	return huma.NewAPI(cfg, &fiberAdapter{router: app, tester: app})
 }
 
-// NewHumaAPIWithGroup은 Fiber v3 그룹(route group)에 huma를 마운트한다.
-// 예: /api/v1 그룹 아래에 모든 오퍼레이션을 등록할 때 사용한다.
-func NewHumaAPIWithGroup(app *fiber.App, group fiber.Router, cfg huma.Config) huma.API {
-	return huma.NewAPI(cfg, &fiberAdapter{router: group, tester: app})
-}
-
 // UnwrapFiberCtx는 huma.Context에서 원본 Fiber 컨텍스트를 추출한다.
 // huma 미들웨어에서 Fiber 전용 기능이 필요할 때 사용한다.
 //
