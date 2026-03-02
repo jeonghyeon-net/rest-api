@@ -1,6 +1,10 @@
 package app
 
-import "github.com/go-playground/validator/v10"
+import (
+	"fmt"
+
+	"github.com/go-playground/validator/v10"
+)
 
 // structValidator는 Fiber의 StructValidator 인터페이스를 구현하는 어댑터다.
 // Fiber가 c.Bind().Body() 등으로 요청을 파싱할 때 자동으로 검증을 수행하게 해준다.
@@ -48,7 +52,13 @@ type structValidator struct {
 // Go에서 any는 TypeScript의 unknown과 비슷한 개념으로,
 // 어떤 타입이든 받을 수 있는 빈 인터페이스다.
 func (v *structValidator) Validate(out any) error {
-	return v.validate.Struct(out)
+	if err := v.validate.Struct(out); err != nil {
+		// 외부 패키지(go-playground/validator) 에러를 래핑한다.
+		// %w로 래핑하므로 errors.AsType[validator.ValidationErrors]로 여전히 추출 가능하다.
+		// 에러 핸들러(errors.go)에서 ValidationErrors를 정상적으로 감지한다.
+		return fmt.Errorf("구조체 검증 실패: %w", err)
+	}
+	return nil
 }
 
 // newStructValidator는 go-playground/validator 인스턴스를 생성하여

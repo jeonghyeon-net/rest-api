@@ -52,7 +52,7 @@ func TestMain(m *testing.M) {
 	// fasthttp 등 프레임워크가 생성하는 goroutine은 우리 코드의 누수가 아니므로
 	// 한 곳(testutil)에서 관리하여 각 테스트 패키지에서 중복 정의를 방지한다.
 	// ... 연산자로 슬라이스를 가변 인자로 전개(spread)한다.
-	goleak.VerifyTestMain(m, testutil.GoleakOptions...)
+	goleak.VerifyTestMain(m, testutil.GoleakOptions()...)
 }
 
 // HealthE2ESuite는 헬스체크 E2E 테스트를 묶는 테스트 스위트다.

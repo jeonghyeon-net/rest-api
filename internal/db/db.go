@@ -52,7 +52,12 @@ import (
 //     NestJS의 DataSource나 PrismaClient와 유사한 역할.
 //   - error: 에러가 있으면 반환, 없으면 nil.
 //     Go에서는 예외(exception) 대신 에러를 반환값으로 전달한다.
-func openDB(path string) (*sql.DB, error) {
+//
+// dirPerm은 DB 파일의 상위 디렉터리를 생성할 때 사용하는 파일 시스템 권한이다.
+// 0o750 = rwxr-x--- (소유자: 읽기+쓰기+실행, 그룹: 읽기+실행, 기타: 접근 불가)
+const dirPerm = 0o750
+
+func openDB(ctx context.Context, path string) (*sql.DB, error) {
 	// ─────────────────────────────────────────────────────────────────────
 	// 1. DB 파일의 상위 디렉터리를 자동 생성
 	// ─────────────────────────────────────────────────────────────────────
@@ -77,7 +82,7 @@ func openDB(path string) (*sql.DB, error) {
 	// Clean으로 안전하게 정규화한 후 사용한다.
 	cleanPath := filepath.Clean(path)
 	dir := filepath.Dir(cleanPath)
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	if err := os.MkdirAll(dir, dirPerm); err != nil {
 		// fmt.Errorf의 %w는 에러 래핑(wrapping) 동사다.
 		// 원본 에러를 감싸면서 추가 컨텍스트를 붙인다.
 		// 나중에 errors.Is()나 errors.Unwrap()으로 원본 에러를 꺼낼 수 있다.
@@ -117,7 +122,7 @@ func openDB(path string) (*sql.DB, error) {
 	//
 	// WAL 모드는 한 번 설정하면 DB 파일에 영구 저장된다 (다른 PRAGMA와 다름).
 	// 그래도 명시적으로 매번 설정하는 것이 안전하다.
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
 		// db.Close()로 이미 열린 연결을 정리한 후 에러를 반환한다.
 		_ = db.Close()
 		return nil, fmt.Errorf("PRAGMA journal_mode 설정 실패: %w", err)
@@ -129,7 +134,7 @@ func openDB(path string) (*sql.DB, error) {
 	//
 	// PostgreSQL/MySQL에서는 기본 활성화지만, SQLite에서는 매 연결마다 명시적으로
 	// 활성화해야 한다. 이 설정을 빠뜨리면 데이터 무결성이 깨질 수 있다.
-	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
+	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys=ON"); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("PRAGMA foreign_keys 설정 실패: %w", err)
 	}
@@ -141,7 +146,7 @@ func openDB(path string) (*sql.DB, error) {
 	//
 	// 5000ms(5초) 동안 기다려도 잠금이 풀리지 않으면 "database is locked" 에러를 반환.
 	// 웹 서버에서 동시 요청이 많을 때 일시적인 잠금 충돌을 자연스럽게 해소한다.
-	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+	if _, err := db.ExecContext(ctx, "PRAGMA busy_timeout=5000"); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("PRAGMA busy_timeout 설정 실패: %w", err)
 	}
@@ -187,7 +192,10 @@ func NewDB(lc fx.Lifecycle, logger *zap.Logger, cfg *config.Config) (*sql.DB, er
 	// openDB를 호출하여 DB 연결을 생성한다.
 	// 이 함수는 위에서 정의한 비공개(unexported) 함수다.
 	// PRAGMA 설정까지 모두 완료된 *sql.DB를 반환한다.
-	db, err := openDB(dbPath)
+	// context.Background()를 사용하는 이유:
+	// openDB는 앱 초기화 시 1회 호출되며, 요청 스코프(request-scoped) context가 아니다.
+	// fx.Lifecycle의 OnStart에서 호출되므로 fx의 StartTimeout이 타임아웃을 관리한다.
+	db, err := openDB(context.Background(), dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("DB 연결 실패: %w", err)
 	}

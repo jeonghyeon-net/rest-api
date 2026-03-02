@@ -204,7 +204,10 @@ func StartServer(lc fx.Lifecycle, shutdowner fx.Shutdowner, app *fiber.App, logg
 		//   1단계(동기): 포트 바인딩 — 실패하면 OnStart가 에러를 반환 → fx 앱 시작 중단
 		//   2단계(비동기): 요청 수신 — 이미 포트가 열려 있으므로 실패할 일이 거의 없다
 		OnStart: func(ctx context.Context) error {
-			ln, err := net.Listen("tcp", ":"+port)
+			// (&net.ListenConfig{}).Listen은 net.Listen의 context 지원 버전이다.
+			// ctx에 fx.StartTimeout 데드라인이 설정되어 있으므로,
+			// 포트 바인딩이 지정 시간 내에 완료되지 않으면 자동 취소된다.
+			ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", ":"+port)
 			if err != nil {
 				return fmt.Errorf("포트 %s 바인딩 실패: %w", port, err)
 			}

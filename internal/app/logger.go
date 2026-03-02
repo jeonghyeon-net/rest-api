@@ -1,6 +1,8 @@
 package app
 
 import (
+	"fmt"
+
 	"go.uber.org/zap"
 
 	"rest-api/internal/config"
@@ -27,10 +29,18 @@ func newLogger(cfg *config.Config) (*zap.Logger, error) {
 	if cfg.AppEnv == "production" {
 		// 프로덕션: JSON 형태의 구조화 로그
 		// 예: {"level":"error","ts":1709369400,"msg":"서버 에러","port":"42001"}
-		return zap.NewProduction()
+		logger, err := zap.NewProduction()
+		if err != nil {
+			return nil, fmt.Errorf("프로덕션 로거 생성 실패: %w", err)
+		}
+		return logger, nil
 	}
 
 	// 개발 환경: 사람이 읽기 쉬운 형태
 	// 예: 2024-03-02T18:30:00.000+0900  ERROR  서버 에러  {"port": "42001"}
-	return zap.NewDevelopment()
+	logger, err := zap.NewDevelopment()
+	if err != nil {
+		return nil, fmt.Errorf("개발 로거 생성 실패: %w", err)
+	}
+	return logger, nil
 }

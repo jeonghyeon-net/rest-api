@@ -15,6 +15,7 @@ package db
 // ─────────────────────────────────────────────────────────────────────────────
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -62,6 +63,8 @@ func TestMain(m *testing.M) {
 //
 //	"이 값이 다르지만 다른 검증도 확인하고 싶다" → assert
 func TestOpenDB(t *testing.T) {
+	t.Parallel()
+
 	// t.TempDir()은 각 테스트마다 고유한 임시 디렉터리를 생성한다.
 	// 테스트가 끝나면 Go가 자동으로 이 디렉터리를 삭제한다.
 	// NestJS에서 beforeEach/afterEach로 임시 파일을 정리하는 것을 Go가 자동 처리한다.
@@ -72,7 +75,7 @@ func TestOpenDB(t *testing.T) {
 	//
 	// require.NoError는 err가 nil이 아니면 즉시 테스트를 중단한다.
 	// DB를 열지 못하면 이후의 PRAGMA 검증이 의미 없으므로 require를 사용한다.
-	db, err := openDB(path)
+	db, err := openDB(context.Background(), path)
 	require.NoError(t, err, "openDB 실패")
 
 	// t.Cleanup()은 테스트가 끝난 후 자동으로 실행되는 정리 함수를 등록한다.
@@ -80,10 +83,9 @@ func TestOpenDB(t *testing.T) {
 	// NestJS에서 afterAll(() => db.close())과 같은 역할이다.
 	t.Cleanup(func() { _ = db.Close() })
 
-	// Ping()은 DB 연결이 실제로 작동하는지 확인한다.
-	// 네트워크 DB에서는 실제 네트워크 요청을 보내지만,
-	// SQLite에서는 파일이 정상적으로 접근 가능한지 확인한다.
-	require.NoError(t, db.Ping(), "DB Ping 실패")
+	// PingContext는 Ping의 context 지원 버전이다.
+	// context.Background()를 사용하는 이유: 테스트 초기화 코드이므로 요청 스코프가 아니다.
+	require.NoError(t, db.PingContext(context.Background()), "DB Ping 실패")
 
 	// ─── PRAGMA 설정 검증 (테이블 주도 테스트) ──────────────────────────
 	//
@@ -124,10 +126,13 @@ func TestOpenDB(t *testing.T) {
 		// 실행 시 "TestOpenDB/journal_mode" 형태로 출력되어 어떤 케이스가 실패했는지 알 수 있다.
 		// go test -run TestOpenDB/journal_mode 로 특정 케이스만 실행할 수도 있다.
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			var got string
-			// QueryRow()는 단일 행을 조회한다. NestJS에서 db.query(...).then(rows => rows[0])과 유사.
+			// QueryRowContext는 QueryRow의 context 지원 버전이다.
+			// NestJS에서 db.query(...).then(rows => rows[0])과 유사.
 			// Scan()은 조회 결과를 Go 변수에 바인딩한다. 포인터(&)를 전달해야 값이 채워진다.
-			err := db.QueryRow(tt.query).Scan(&got)
+			err := db.QueryRowContext(context.Background(), tt.query).Scan(&got)
 			require.NoError(t, err, "%s 조회 실패", tt.name)
 
 			// assert.Equal은 실패 시 상세한 diff를 출력하지만 테스트를 중단하지 않는다.
@@ -144,14 +149,16 @@ func TestOpenDB(t *testing.T) {
 // openDB가 os.MkdirAll로 필요한 디렉터리를 모두 생성해야 한다.
 // NestJS에서 fs.mkdirSync(dir, { recursive: true })와 같다.
 func TestOpenDB_CreatesDirectory(t *testing.T) {
+	t.Parallel()
+
 	// 존재하지 않는 중첩 디렉터리 경로를 의도적으로 지정한다.
 	// "nested/deep/" 디렉터리는 아직 없으므로, openDB가 자동 생성해야 한다.
 	path := filepath.Join(t.TempDir(), "nested", "deep", "test.db")
 
-	db, err := openDB(path)
+	db, err := openDB(context.Background(), path)
 	require.NoError(t, err, "openDB 실패 (중첩 디렉터리)")
 
 	t.Cleanup(func() { _ = db.Close() })
 
-	require.NoError(t, db.Ping(), "DB Ping 실패")
+	require.NoError(t, db.PingContext(context.Background()), "DB Ping 실패")
 }
