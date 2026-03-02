@@ -8,6 +8,23 @@ package ruleset
 //
 // Go의 인터페이스 패턴 규칙 (채널톡 컨벤션):
 //
+// 블로그에서는 이것을 "3종 세트"라고 부른다:
+//   exported interface + unexported impl + constructor
+// 이 세 가지가 반드시 함께 존재해야 한다.
+//
+// ⚠️ Go 커뮤니티 관례와의 차이:
+//   Go Code Review Comments(https://go.dev/wiki/CodeReviewComments)에서는
+//   "구현자 패키지에 인터페이스를 정의하지 말고, 사용자 패키지에 정의하라"고 권장한다.
+//   또한 생성자는 구체 타입을 반환하는 것이 일반적이다 ("accept interfaces, return structs").
+//   benbjohnson/wtf, go-kit 등 유명 프로젝트들도 이 관례를 따른다.
+//
+//   채널톡 컨벤션은 이 관례와 다르게, DDD 의존성 역전을 위해
+//   "구현자 패키지에서 인터페이스를 정의하고 생성자가 인터페이스를 반환"하는 패턴을 강제한다.
+//   이는 NestJS의 DI 패턴에 더 가까운 접근이며, Go 커뮤니티에서는 소수파이다.
+//   (mehdihadeli/go-food-delivery가 동일한 패턴을 사용하는 몇 안 되는 프로젝트)
+//
+// 4가지 규칙:
+//
 // 1. 공개(exported) 인터페이스 + 비공개(unexported) 구현체가 같은 파일에 있어야 한다.
 //    예시:
 //      type Repository interface { ... }  ← 공개 (대문자 시작)
@@ -24,6 +41,10 @@ package ruleset
 //
 // 3. 구현체 struct는 외부에 노출하지 않는다 (unexported).
 //    외부에서는 인터페이스 타입만 알면 되고, 구현 세부사항은 몰라도 된다.
+//
+// 4. 3종 세트 완전성: 인터페이스 + 구현체가 있으면 생성자(New*)도 있어야 한다.
+//    생성자 없이 인터페이스와 구현체만 있으면 외부에서 인스턴스를 생성할 수 없다.
+//    블로그에서 "interface + private impl + constructor 3종 세트 강제"라고 명시한 규칙.
 
 import (
 	"fmt"
@@ -54,12 +75,18 @@ func CheckInterfacePatterns(files []*analyzer.FileInfo, cfg *Config) []report.Vi
 			}
 		}
 
-		// 규칙 1: 공개 인터페이스에 대응하는 비공개 구현체가 있는지 검사
+		// 규칙 1 + 규칙 4: 공개 인터페이스에 대응하는 비공개 구현체와 생성자가 있는지 검사
+		// "3종 세트" = interface + impl + constructor
 		for _, iface := range interfaces {
 			if !iface.IsExported {
 				continue // 비공개 인터페이스는 검사 대상이 아님
 			}
 			if v := checkMissingImpl(f, iface, structs); v != nil {
+				violations = append(violations, *v)
+				continue // impl이 없으면 constructor 검사는 의미 없음
+			}
+			// impl은 있으니 3종 세트의 마지막: constructor도 있는지 검사
+			if v := checkMissingConstructor(f, iface); v != nil {
 				violations = append(violations, *v)
 			}
 		}
@@ -115,6 +142,64 @@ func checkMissingImpl(f *analyzer.FileInfo, iface analyzer.TypeInfo, structs []a
 		File:     f.Path,
 		Line:     iface.Line,
 		Fix:      fmt.Sprintf("add unexported struct %q implementing %s in the same file", toLowerFirst(iface.Name), iface.Name),
+	}
+}
+
+// ──────────────────────────────────────────────
+// 규칙 4: 3종 세트 완전성 — 생성자가 존재해야 한다
+// ──────────────────────────────────────────────
+
+// checkMissingConstructor는 공개 인터페이스 + 비공개 구현체가 있을 때,
+// 같은 파일에 생성자(New* 함수)가 있는지 확인한다.
+//
+// 블로그에서 "3종 세트 강제"라고 부른 규칙의 마지막 조각이다.
+// 인터페이스와 구현체가 있는데 생성자가 없으면:
+//   - 외부에서 구현체를 직접 생성할 수 없다 (unexported이므로)
+//   - Uber FX 같은 DI 프레임워크에 등록할 수 없다
+//   - 3종 세트가 깨져서 의존성 주입 패턴이 불완전해진다
+//
+// NestJS 비유:
+//
+//	@Injectable() 데코레이터가 붙은 클래스는 자동으로 DI 컨테이너에 등록된다.
+//	Go에는 데코레이터가 없으므로, New* 생성자를 만들어서 "이 구현체를 이렇게 생성한다"를
+//	명시적으로 알려줘야 한다. 생성자가 없으면 NestJS에서 @Injectable() 빼먹은 것과 비슷.
+//
+// 예시 (정상 — 3종 세트 완성):
+//
+//	type Repository interface { ... }           ← 1. 인터페이스
+//	type repository struct { ... }              ← 2. 구현체
+//	func New() Repository { return &repository{} }  ← 3. 생성자
+//
+// 예시 (위반 — 생성자 누락):
+//
+//	type Repository interface { ... }           ← 인터페이스 ✓
+//	type repository struct { ... }              ← 구현체 ✓
+//	                                               (생성자 없음 ✗)
+func checkMissingConstructor(f *analyzer.FileInfo, iface analyzer.TypeInfo) *report.Violation {
+	// 파일의 모든 함수를 순회하며 생성자를 찾는다
+	for _, fn := range f.Functions {
+		// 생성자 조건: "New"로 시작, 공개 함수, 리시버 없음 (메서드가 아님)
+		if !fn.IsExported || !strings.HasPrefix(fn.Name, "New") || fn.Receiver != "" {
+			continue
+		}
+		if len(fn.ReturnTypes) == 0 {
+			continue
+		}
+
+		// 첫 번째 반환 타입이 이 인터페이스인지 확인
+		firstReturn := strings.TrimPrefix(fn.ReturnTypes[0], "*")
+		if firstReturn == iface.Name {
+			return nil // 생성자 발견 → 3종 세트 완성
+		}
+	}
+
+	return &report.Violation{
+		Rule:     "interface/missing-constructor",
+		Severity: report.Warning,
+		Message:  fmt.Sprintf("exported interface %q has implementation but no constructor (New*) returning it", iface.Name),
+		File:     f.Path,
+		Line:     iface.Line,
+		Fix:      fmt.Sprintf("add constructor: func New() %s { return &%s{} }", iface.Name, toLowerFirst(iface.Name)),
 	}
 }
 
