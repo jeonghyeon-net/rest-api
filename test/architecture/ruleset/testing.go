@@ -1,21 +1,18 @@
 // testing.go — 테스트 품질 규칙을 정의한다.
 //
-// 현재 1가지 규칙을 검사한다:
+// 3가지 규칙을 검사한다:
 //
 //   - testing/missing-goleak: 테스트 파일이 있는 패키지에 goleak이 적용되어 있는지 확인
+//   - testing/missing-testify: 테스트 함수가 있는 파일에 testify를 사용하는지 확인
+//   - testing/raw-assertion: testify를 import했지만 t.Fatal/t.Error 등 표준 단언도 함께 사용하는지 확인
 //
 // goleak(go.uber.org/goleak)은 Uber가 만든 goroutine 누수 검출 도구다.
 // 테스트가 끝난 후에도 정리되지 않은 goroutine이 남아 있으면 테스트를 실패시킨다.
-// DB 연결, 타이머, 채널 등에서 발생하는 goroutine 누수를 테스트 시점에 잡아낸다.
 //
-// goleak을 적용하려면 패키지에 TestMain 함수를 만들고
-// goleak.VerifyTestMain(m)을 호출해야 한다:
+// testify(github.com/stretchr/testify)는 Go의 표준 testing 패키지를 보완하는 단언 라이브러리다.
+// require.NoError(t, err)처럼 깔끔한 단언과, 실패 시 상세한 diff 출력을 제공한다.
 //
-//	func TestMain(m *testing.M) {
-//	    goleak.VerifyTestMain(m)
-//	}
-//
-// 이 규칙은 internal/ 아래의 모든 테스트 패키지에 goleak 적용을 강제한다.
+// 이 규칙은 internal/ 아래의 모든 테스트 패키지에 두 도구의 적용을 강제한다.
 package ruleset
 
 import (
@@ -29,10 +26,34 @@ import (
 	"rest-api/test/architecture/report"
 )
 
-// goleakImportPath는 goleak 패키지의 import 경로다.
+// 테스트 품질 규칙에서 사용하는 import 경로 상수.
 const goleakImportPath = "go.uber.org/goleak"
 
+// testifyImportPrefixes는 testify 패키지의 import 경로 접두사 목록이다.
+// require, assert, suite 중 하나라도 import하면 testify를 사용하는 것으로 판단한다.
+var testifyImportPrefixes = []string{
+	"github.com/stretchr/testify/require",
+	"github.com/stretchr/testify/assert",
+	"github.com/stretchr/testify/suite",
+}
+
+// rawAssertionMethods는 testify로 대체해야 하는 testing.T의 단언 메서드 목록이다.
+// 이 메서드들을 직접 호출하면 testify와 일관성이 깨지므로 사용을 금지한다.
+//
+//   - Fatal, Fatalf → require.NoError, require.FailNow 등으로 대체
+//   - Error, Errorf → assert.NoError, assert.Fail 등으로 대체
+//
+// t.Log, t.Logf, t.Skip, t.Cleanup, t.Run 등은 testify가 대체하지 않는
+// 테스트 인프라 메서드이므로 금지 대상이 아니다.
+var rawAssertionMethods = map[string]bool{
+	"Fatal":  true,
+	"Fatalf": true,
+	"Error":  true,
+	"Errorf": true,
+}
+
 // testPackageInfo는 하나의 테스트 패키지(디렉토리)에 대한 분석 결과를 담는다.
+// goleak 규칙은 패키지 단위로 검사한다 (TestMain은 패키지당 하나).
 type testPackageInfo struct {
 	dir          string // 패키지 디렉토리의 절대 경로
 	hasTestFiles bool   // _test.go 파일이 하나라도 있는지
@@ -40,13 +61,23 @@ type testPackageInfo struct {
 	hasGoleak    bool   // goleak 패키지를 import하는지
 }
 
+// testFileInfo는 하나의 테스트 파일에 대한 분석 결과를 담는다.
+// testify 규칙과 raw-assertion 규칙은 파일 단위로 검사한다.
+type testFileInfo struct {
+	path             string // 파일의 절대 경로
+	hasTestFn        bool   // TestMain이 아닌 Test* 함수가 있는지
+	hasTestify       bool   // testify 패키지를 import하는지
+	hasRawAssertions bool   // t.Fatal, t.Fatalf, t.Error, t.Errorf 등 표준 단언을 직접 호출하는지
+}
+
 // CheckTestingPatterns는 테스트 품질 규칙을 검사하여 위반 목록을 반환한다.
 //
 // 검사 대상: internal/ 아래의 모든 Go 테스트 파일 (_test.go)
 //
 // 검사 내용:
-//  1. 테스트 파일이 있는 패키지에 TestMain 함수가 있는지
-//  2. TestMain이 goleak.VerifyTestMain을 호출하는지 (import 여부로 판단)
+//  1. (패키지 단위) 테스트 파일이 있는 패키지에 TestMain + goleak이 있는지
+//  2. (파일 단위) Test* 함수가 있는 파일에 testify를 import하는지
+//  3. (파일 단위) testify를 import한 파일에서 t.Fatal/t.Error 등 표준 단언을 혼용하지 않는지
 //
 // 테스트 파일을 AST로 파싱하여 함수 선언과 import 문을 검사한다.
 // 기존 analyzer.ParseDirectory는 _test.go를 건너뛰므로, 여기서 별도로 파싱한다.
@@ -60,15 +91,15 @@ func CheckTestingPatterns(cfg *Config) []report.Violation {
 		return nil
 	}
 
-	// internal/ 아래의 모든 테스트 패키지를 수집한다.
-	packages := collectTestPackages(internalDir)
+	// internal/ 아래의 모든 테스트 패키지와 파일을 수집한다.
+	packages, files := collectTestInfo(internalDir)
 
+	// ── 규칙 1: goleak (패키지 단위) ──
 	for _, pkg := range packages {
 		if !pkg.hasTestFiles {
-			continue // 테스트 파일이 없는 패키지는 검사 대상이 아님
+			continue
 		}
 
-		// 프로젝트 루트 기준 상대 경로로 변환 (에러 메시지 가독성)
 		relDir, _ := filepath.Rel(cfg.ProjectRoot, pkg.dir)
 
 		if !pkg.hasTestMain {
@@ -90,26 +121,56 @@ func CheckTestingPatterns(cfg *Config) []report.Violation {
 		}
 	}
 
+	// ── 규칙 2: testify (파일 단위) ──
+	for _, file := range files {
+		if !file.hasTestFn {
+			continue // Test* 함수가 없는 파일은 검사 대상이 아님 (TestMain만 있는 파일 등)
+		}
+
+		if !file.hasTestify {
+			relPath, _ := filepath.Rel(cfg.ProjectRoot, file.path)
+			violations = append(violations, report.Violation{
+				Rule:     "testing/missing-testify",
+				Severity: report.Error,
+				Message:  "Test* 함수가 있지만 testify를 사용하지 않는다",
+				File:     relPath,
+				Fix:      "testify/require 또는 testify/assert를 import하여 단언문을 작성하라",
+			})
+		}
+	}
+
+	// ── 규칙 3: raw assertion (파일 단위) ──
+	// testify를 import했지만 t.Fatal, t.Error 등 표준 단언도 함께 사용하는 혼용을 잡는다.
+	// testify를 import하지 않은 경우는 규칙 2(missing-testify)에서 이미 잡으므로 여기서는 제외한다.
+	for _, file := range files {
+		if !file.hasTestFn || !file.hasTestify || !file.hasRawAssertions {
+			continue
+		}
+
+		relPath, _ := filepath.Rel(cfg.ProjectRoot, file.path)
+		violations = append(violations, report.Violation{
+			Rule:     "testing/raw-assertion",
+			Severity: report.Error,
+			Message:  "testify를 import했지만 t.Fatal/t.Error 등 표준 단언도 함께 사용한다",
+			File:     relPath,
+			Fix:      "t.Fatal → require.FailNow, t.Error → assert.Fail 등 testify 단언으로 교체하라",
+		})
+	}
+
 	return violations
 }
 
-// collectTestPackages는 rootDir 아래의 모든 디렉토리를 순회하면서
-// 각 디렉토리(패키지)의 테스트 파일 정보를 수집한다.
-//
-// 반환값은 디렉토리별로 하나의 testPackageInfo를 담은 슬라이스다.
-// 같은 디렉토리의 여러 _test.go 파일은 하나의 testPackageInfo로 합쳐진다.
-func collectTestPackages(rootDir string) []testPackageInfo {
-	// map[디렉토리경로]*testPackageInfo 로 디렉토리별 정보를 모은다.
+// collectTestInfo는 rootDir 아래의 모든 디렉토리를 순회하면서
+// 패키지 단위 정보(goleak용)와 파일 단위 정보(testify용)를 동시에 수집한다.
+func collectTestInfo(rootDir string) ([]testPackageInfo, []testFileInfo) {
 	pkgMap := make(map[string]*testPackageInfo)
+	var files []testFileInfo
 
-	// filepath.WalkDir은 filepath.Walk보다 효율적인 디렉토리 순회 함수다.
-	// os.DirEntry를 사용하여 불필요한 os.Stat 호출을 줄인다.
 	_ = filepath.WalkDir(rootDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			return nil // 에러가 있어도 계속 진행
+			return nil
 		}
 
-		// 숨김 디렉토리, vendor, tmp는 건너뛴다
 		if d.IsDir() {
 			name := d.Name()
 			if strings.HasPrefix(name, ".") || name == "vendor" || name == "tmp" {
@@ -118,14 +179,13 @@ func collectTestPackages(rootDir string) []testPackageInfo {
 			return nil
 		}
 
-		// _test.go 파일만 관심 있다
 		if !strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
 
 		dir := filepath.Dir(path)
 
-		// 이 디렉토리의 testPackageInfo가 없으면 생성
+		// 패키지 정보 초기화
 		pkg, exists := pkgMap[dir]
 		if !exists {
 			pkg = &testPackageInfo{dir: dir}
@@ -133,65 +193,207 @@ func collectTestPackages(rootDir string) []testPackageInfo {
 		}
 		pkg.hasTestFiles = true
 
-		// 이미 goleak이 발견된 패키지는 추가 파싱 불필요
-		if pkg.hasGoleak {
-			return nil
-		}
-
-		// _test.go 파일을 AST로 파싱하여 TestMain과 goleak import를 찾는다
-		analyzeTestFile(path, pkg)
+		// 파일을 AST로 파싱하여 패키지/파일 정보를 동시에 수집
+		fileInfo := analyzeTestFile(path, pkg)
+		files = append(files, fileInfo)
 
 		return nil
 	})
 
-	// map을 슬라이스로 변환하여 반환
-	result := make([]testPackageInfo, 0, len(pkgMap))
+	packages := make([]testPackageInfo, 0, len(pkgMap))
 	for _, pkg := range pkgMap {
-		result = append(result, *pkg)
+		packages = append(packages, *pkg)
 	}
-	return result
+	return packages, files
 }
 
 // analyzeTestFile은 하나의 _test.go 파일을 AST로 파싱하여
-// TestMain 함수 존재 여부와 goleak import 여부를 확인한다.
+// 패키지 정보(TestMain, goleak)와 파일 정보(Test* 함수, testify)를 수집한다.
 //
 // go/parser.ParseFile로 파일을 파싱하고:
-//   - import 목록에서 "go.uber.org/goleak"이 있는지 확인
-//   - 최상위 함수 선언 중 "TestMain"이 있는지 확인
+//   - import 목록에서 goleak, testify 경로를 확인
+//   - 최상위 함수 선언에서 TestMain, Test* 함수를 확인
 //
-// 결과는 pkg 포인터에 직접 기록한다 (반환값 없음).
-func analyzeTestFile(path string, pkg *testPackageInfo) {
-	fset := token.NewFileSet()
+// 패키지 정보는 pkg 포인터에 직접 기록하고, 파일 정보는 testFileInfo로 반환한다.
+func analyzeTestFile(path string, pkg *testPackageInfo) testFileInfo {
+	info := testFileInfo{path: path}
 
-	// parser.ImportsOnly 플래그를 사용하면 import 문만 파싱하여 빠르다.
-	// 하지만 TestMain 함수 선언도 확인해야 하므로 전체 파싱(0)을 한다.
+	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, 0)
 	if err != nil {
-		return // 파싱 실패한 파일은 건너뜀
+		return info
 	}
 
-	// import 목록에서 goleak 경로를 찾는다
+	// import 목록을 검사한다
 	for _, imp := range f.Imports {
 		importPath := strings.Trim(imp.Path.Value, `"`)
+
+		// goleak import 확인
 		if importPath == goleakImportPath {
 			pkg.hasGoleak = true
-			break
+		}
+
+		// testify import 확인
+		// require, assert, suite 중 하나라도 import하면 testify 사용으로 판단
+		for _, prefix := range testifyImportPrefixes {
+			if importPath == prefix {
+				info.hasTestify = true
+				break
+			}
 		}
 	}
 
-	// 최상위 선언에서 TestMain 함수를 찾는다
+	// 최상위 함수 선언을 검사한다
 	for _, decl := range f.Decls {
-		// 타입 단언으로 FuncDecl(함수 선언)인지 확인한다.
-		// import, type, var 등의 GenDecl은 건너뛴다.
 		funcDecl, ok := decl.(*ast.FuncDecl)
 		if !ok {
 			continue
 		}
 
-		// 함수 이름이 "TestMain"이고 리시버가 없는 경우 (메서드가 아닌 함수)
-		if funcDecl.Name.Name == "TestMain" && funcDecl.Recv == nil {
+		// 리시버가 없는(일반 함수) 것만 확인
+		// 메서드(리시버가 있는 함수)는 suite의 Test* 메서드이므로
+		// suite를 import했으면 이미 testify를 사용하는 것이다.
+		if funcDecl.Recv != nil {
+			continue
+		}
+
+		name := funcDecl.Name.Name
+
+		if name == "TestMain" {
 			pkg.hasTestMain = true
-			break
+		} else if strings.HasPrefix(name, "Test") {
+			info.hasTestFn = true
 		}
 	}
+
+	// 함수 본문에서 표준 라이브러리의 단언 메서드(t.Fatal 등) 사용을 검사한다.
+	// testify와의 혼용을 방지하기 위해, testing.T 파라미터에 대한
+	// Fatal, Fatalf, Error, Errorf 호출을 감지한다.
+	info.hasRawAssertions = detectRawAssertions(f)
+
+	return info
+}
+
+// detectRawAssertions는 파일에서 testing.T의 단언 메서드 직접 호출을 감지한다.
+//
+// testify를 사용하는 프로젝트에서 t.Fatal, t.Fatalf, t.Error, t.Errorf를
+// 직접 호출하면 일관성이 깨지므로, 이 함수로 혼용을 감지한다.
+//
+// 감지 방식:
+//  1. 파일 내 모든 함수(FuncDecl, FuncLit 포함)에서 *testing.T 파라미터 이름을 수집한다
+//  2. 파일 전체를 AST로 순회하면서 해당 파라미터의 금지된 메서드 호출을 찾는다
+//
+// FuncLit(익명 함수)도 검사하므로 t.Run() 콜백 내부의 호출도 잡아낸다.
+// 예: t.Run("sub", func(t *testing.T) { t.Fatal("...") })
+func detectRawAssertions(f *ast.File) bool {
+	// 1단계: 파일 내 모든 함수에서 *testing.T 파라미터 이름을 수집한다.
+	// 관례적으로 t를 사용하지만, tt, testingT 등 다른 이름도 잡기 위해 동적으로 수집한다.
+	tNames := make(map[string]bool)
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch fn := n.(type) {
+		case *ast.FuncDecl:
+			// 일반 함수 선언 (예: func TestFoo(t *testing.T))
+			if name := findTestingTParam(fn.Type.Params); name != "" {
+				tNames[name] = true
+			}
+		case *ast.FuncLit:
+			// 익명 함수 (예: t.Run("sub", func(t *testing.T) { ... }))
+			if name := findTestingTParam(fn.Type.Params); name != "" {
+				tNames[name] = true
+			}
+		}
+		return true
+	})
+
+	if len(tNames) == 0 {
+		return false
+	}
+
+	// 2단계: 파일 전체에서 금지된 메서드 호출을 검색한다.
+	// t.Fatal(), t.Errorf() 등의 패턴을 AST에서 찾는다.
+	//
+	// AST 구조:
+	//   *ast.CallExpr (함수 호출)
+	//     └─ Fun: *ast.SelectorExpr (메서드 선택)
+	//           ├─ X: *ast.Ident (수신자, 예: "t")
+	//           └─ Sel: *ast.Ident (메서드명, 예: "Fatal")
+	found := false
+	ast.Inspect(f, func(n ast.Node) bool {
+		if found {
+			return false // 이미 발견했으면 순회를 중단한다
+		}
+
+		callExpr, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		selExpr, ok := callExpr.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+
+		ident, ok := selExpr.X.(*ast.Ident)
+		if !ok {
+			return true
+		}
+
+		// 수집한 *testing.T 파라미터 이름과 금지된 메서드인지 동시에 확인한다.
+		// 예: t.Fatal → tNames["t"]=true && rawAssertionMethods["Fatal"]=true
+		if tNames[ident.Name] && rawAssertionMethods[selExpr.Sel.Name] {
+			found = true
+			return false
+		}
+
+		return true
+	})
+
+	return found
+}
+
+// findTestingTParam는 함수 파라미터 목록에서 *testing.T 타입 파라미터의 이름을 반환한다.
+//
+// 예:
+//
+//	func TestFoo(t *testing.T) → "t"
+//	func helper(tt *testing.T, ...) → "tt"
+//	func noTest(s string) → ""
+//
+// AST에서 *testing.T는 다음 구조로 표현된다:
+//
+//	*ast.StarExpr (포인터)
+//	  └─ *ast.SelectorExpr (패키지.타입)
+//	        ├─ X: *ast.Ident (패키지명: "testing")
+//	        └─ Sel: *ast.Ident (타입명: "T")
+func findTestingTParam(params *ast.FieldList) string {
+	if params == nil {
+		return ""
+	}
+
+	for _, param := range params.List {
+		// *testing.T 형태인지 확인: StarExpr → SelectorExpr
+		starExpr, ok := param.Type.(*ast.StarExpr)
+		if !ok {
+			continue
+		}
+
+		selExpr, ok := starExpr.X.(*ast.SelectorExpr)
+		if !ok {
+			continue
+		}
+
+		ident, ok := selExpr.X.(*ast.Ident)
+		if !ok {
+			continue
+		}
+
+		// 패키지가 "testing"이고 타입이 "T"인지 확인한다
+		if ident.Name == "testing" && selExpr.Sel.Name == "T" {
+			if len(param.Names) > 0 {
+				return param.Names[0].Name
+			}
+		}
+	}
+
+	return ""
 }

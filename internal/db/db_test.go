@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
@@ -52,10 +54,13 @@ func TestMain(m *testing.M) {
 // NestJS에서 describe('openDB', () => { it('should ...') })로 작성하는 것과 유사하다.
 // 다만 Go에서는 별도의 describe/it 래퍼 없이 함수 이름으로 구분한다.
 //
-// *testing.T는 테스트 컨텍스트 객체로, 다음과 같은 메서드를 제공한다:
-//   - t.Fatalf(): 에러 메시지를 출력하고 즉시 테스트를 중단한다 (throw new Error와 유사)
-//   - t.Errorf(): 에러를 기록하지만 테스트를 계속 진행한다 (console.error와 유사)
-//   - t.TempDir(): 테스트 전용 임시 디렉터리를 생성하고, 테스트 종료 시 자동 삭제한다
+// testify의 두 가지 단언 패키지:
+//   - require: 실패 시 즉시 테스트를 중단한다 (t.Fatal과 동일). 전제 조건 검증에 사용.
+//   - assert: 실패를 기록하지만 테스트를 계속 진행한다 (t.Error와 동일). 결과 비교에 사용.
+//
+// 사용 패턴: "이 조건이 만족되지 않으면 이후 테스트가 의미 없다" → require
+//
+//	"이 값이 다르지만 다른 검증도 확인하고 싶다" → assert
 func TestOpenDB(t *testing.T) {
 	// t.TempDir()은 각 테스트마다 고유한 임시 디렉터리를 생성한다.
 	// 테스트가 끝나면 Go가 자동으로 이 디렉터리를 삭제한다.
@@ -64,28 +69,21 @@ func TestOpenDB(t *testing.T) {
 
 	// openDB는 소문자로 시작하므로 unexported(비공개) 함수다.
 	// 같은 패키지(package db)에 있는 테스트 파일이므로 접근 가능하다.
-	db, err := openDB(path)
-	if err != nil {
-		t.Fatalf("openDB 실패: %v", err)
-	}
-
-	// defer는 함수가 종료될 때(정상/에러 모두) 실행할 코드를 등록한다.
-	// NestJS에서 afterEach(() => db.close())와 비슷하지만,
-	// Go의 defer는 함수 스코프에서 LIFO(후입선출) 순서로 실행된다.
 	//
-	// 여기서는 테스트 종료 시 DB 연결을 닫아 리소스 누수를 방지한다.
-	defer func() {
-		if err := db.Close(); err != nil {
-			t.Errorf("DB Close 실패: %v", err)
-		}
-	}()
+	// require.NoError는 err가 nil이 아니면 즉시 테스트를 중단한다.
+	// DB를 열지 못하면 이후의 PRAGMA 검증이 의미 없으므로 require를 사용한다.
+	db, err := openDB(path)
+	require.NoError(t, err, "openDB 실패")
+
+	// t.Cleanup()은 테스트가 끝난 후 자동으로 실행되는 정리 함수를 등록한다.
+	// defer와 비슷하지만, t.Cleanup은 서브테스트가 끝난 후까지 보장된다.
+	// NestJS에서 afterAll(() => db.close())과 같은 역할이다.
+	t.Cleanup(func() { _ = db.Close() })
 
 	// Ping()은 DB 연결이 실제로 작동하는지 확인한다.
 	// 네트워크 DB에서는 실제 네트워크 요청을 보내지만,
 	// SQLite에서는 파일이 정상적으로 접근 가능한지 확인한다.
-	if err := db.Ping(); err != nil {
-		t.Fatalf("DB Ping 실패: %v", err)
-	}
+	require.NoError(t, db.Ping(), "DB Ping 실패")
 
 	// ─── PRAGMA 설정 검증 (테이블 주도 테스트) ──────────────────────────
 	//
@@ -129,12 +127,12 @@ func TestOpenDB(t *testing.T) {
 			var got string
 			// QueryRow()는 단일 행을 조회한다. NestJS에서 db.query(...).then(rows => rows[0])과 유사.
 			// Scan()은 조회 결과를 Go 변수에 바인딩한다. 포인터(&)를 전달해야 값이 채워진다.
-			if err := db.QueryRow(tt.query).Scan(&got); err != nil {
-				t.Fatalf("%s 조회 실패: %v", tt.name, err)
-			}
-			if got != tt.want {
-				t.Errorf("%s: got %q, want %q", tt.name, got, tt.want)
-			}
+			err := db.QueryRow(tt.query).Scan(&got)
+			require.NoError(t, err, "%s 조회 실패", tt.name)
+
+			// assert.Equal은 실패 시 상세한 diff를 출력하지만 테스트를 중단하지 않는다.
+			// "expected: wal, actual: delete" 형태로 무엇이 다른지 명확히 보여준다.
+			assert.Equal(t, tt.want, got, "%s 값이 다르다", tt.name)
 		})
 	}
 }
@@ -151,14 +149,9 @@ func TestOpenDB_CreatesDirectory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "deep", "test.db")
 
 	db, err := openDB(path)
-	if err != nil {
-		t.Fatalf("openDB 실패 (중첩 디렉터리): %v", err)
-	}
-	// _ = db.Close()는 에러를 명시적으로 무시하는 Go 관용 패턴이다.
-	// 테스트 정리(cleanup) 코드에서는 Close 에러가 크게 중요하지 않으므로 무시한다.
-	defer func() { _ = db.Close() }()
+	require.NoError(t, err, "openDB 실패 (중첩 디렉터리)")
 
-	if err := db.Ping(); err != nil {
-		t.Fatalf("DB Ping 실패: %v", err)
-	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	require.NoError(t, db.Ping(), "DB Ping 실패")
 }
