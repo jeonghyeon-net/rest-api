@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 
 	"github.com/joho/godotenv"
@@ -20,6 +21,8 @@ import (
 	// 위해 임포트하는 Go 관용 패턴이다. automaxprocs의 init()이 자동으로 GOMAXPROCS를 설정한다.
 	_ "go.uber.org/automaxprocs"
 	"go.uber.org/fx"
+
+	"rest-api/internal/db"
 )
 
 // main은 애플리케이션의 진입점이다.
@@ -76,6 +79,24 @@ func main() {
 		// fx는 이 함수의 반환 타입(*fiber.App)을 보고,
 		// 다른 곳에서 *fiber.App을 요청하면 이 함수를 호출해서 주입한다.
 		fx.Provide(newFiberApp),
+
+		// db.NewDB 함수를 DI 컨테이너에 등록한다.
+		// *sql.DB 타입이 필요한 곳에 자동으로 주입된다.
+		// NewDB 내부에서 SQLite 연결 생성 → PRAGMA 설정 → 마이그레이션 실행까지 처리한다.
+		fx.Provide(db.NewDB),
+
+		// DB 초기화를 강제한다.
+		// fx는 "누군가 요청할 때만" Provider를 실행하는 지연 초기화(lazy init) 방식이다.
+		// 아직 *sql.DB를 사용하는 곳이 없으므로, Invoke로 강제 초기화한다.
+		// 나중에 도메인 서비스가 *sql.DB를 주입받으면 이 줄은 제거할 수 있다.
+		//
+		// NestJS에서는 모듈이 로드되면 모든 Provider가 자동 초기화되지만,
+		// fx는 "필요한 것만" 초기화하는 방식이다. 이 차이를 이해하는 것이 중요하다.
+		//
+		// func(_ *sql.DB) {}는 익명 함수(anonymous function)로,
+		// *sql.DB를 인자로 받지만 아무것도 하지 않는다.
+		// fx는 이 함수의 인자 타입을 보고 *sql.DB Provider(db.NewDB)를 실행한다.
+		fx.Invoke(func(_ *sql.DB) {}),
 
 		// startServer 함수를 호출한다.
 		// fx.Invoke()에 등록된 함수는 앱 시작 시 자동 실행된다.
