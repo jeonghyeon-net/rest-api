@@ -79,6 +79,15 @@ func newFiberApp(cfg *Config) *fiber.App {
 		// false(기본값)면 대소문자 구분 없이 매칭된다.
 		// REST API에서 URL 해석의 일관성을 위해 true로 설정한다.
 		CaseSensitive: true,
+
+		// === 요청 검증 ===
+
+		// StructValidator: 요청 바디를 구조체로 파싱한 뒤 자동으로 검증을 실행한다.
+		// NestJS의 app.useGlobalPipes(new ValidationPipe())과 같은 역할이다.
+		// c.Bind().Body(&req) 호출 시 파싱 → 검증이 한 번에 이루어진다.
+		// 검증 규칙은 구조체의 validate 태그로 정의한다.
+		// (예: `validate:"required,email"`)
+		StructValidator: newStructValidator(),
 	})
 
 	// 보안/유틸리티 미들웨어를 등록한다.
