@@ -5,7 +5,8 @@
 # 실행 순서:
 #   1. make build - 컴파일 성공 여부 확인
 #   2. make test  - 유닛 테스트 실행
-#   3. make arch  - DDD 아키텍처 규칙 검증
+#   3. make e2e   - E2E 통합 테스트 실행
+#   4. make arch  - DDD 아키텍처 규칙 검증
 #
 # pre-commit에서 포맷/린트를 잡고, pre-push에서 빌드/테스트/아키텍처를 잡는 구조다.
 # 빌드, 테스트, 아키텍처 검증은 상대적으로 느리므로 커밋마다가 아닌 push 시점에 실행한다.
@@ -16,7 +17,7 @@
 # --- 1단계: make build (빌드 검증) ---
 # go build가 성공하는지 확인한다.
 # 컴파일 에러가 있으면 push를 차단하여 깨진 코드가 원격에 올라가는 것을 방지한다.
-echo "🔍 [1/3] 빌드 검증 중... (make build)"
+echo "🔍 [1/4] 빌드 검증 중... (make build)"
 
 make build
 if [ $? -ne 0 ]; then
@@ -26,12 +27,12 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-echo "✅ [1/3] 빌드 검증 통과"
+echo "✅ [1/4] 빌드 검증 통과"
 
 # --- 2단계: make test (유닛 테스트) ---
 # 아키텍처 테스트를 제외한 모든 유닛 테스트를 실행한다.
 # 테스트 실패가 있으면 push를 차단하여 깨진 코드가 원격에 올라가는 것을 방지한다.
-echo "🔍 [2/3] 유닛 테스트 실행 중... (make test)"
+echo "🔍 [2/4] 유닛 테스트 실행 중... (make test)"
 
 make test
 if [ $? -ne 0 ]; then
@@ -41,12 +42,27 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-echo "✅ [2/3] 유닛 테스트 통과"
+echo "✅ [2/4] 유닛 테스트 통과"
 
-# --- 3단계: make arch (아키텍처 규칙 검증) ---
+# --- 3단계: make e2e (E2E 통합 테스트) ---
+# in-memory SQLite로 HTTP API 전 레이어를 관통하는 통합 테스트를 실행한다.
+# 핸들러 → 서비스 → 리포지토리 → DB까지 실제 동작을 검증한다.
+echo "🔍 [3/4] E2E 테스트 실행 중... (make e2e)"
+
+make e2e
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "❌ E2E 테스트에 실패하여 push가 차단되었습니다."
+    echo "   실패한 테스트를 수정한 후 다시 push해 주세요."
+    exit 1
+fi
+
+echo "✅ [3/4] E2E 테스트 통과"
+
+# --- 4단계: make arch (아키텍처 규칙 검증) ---
 # DDD 아키텍처 규칙(의존성 방향, 네이밍, 인터페이스 패턴, 디렉토리 구조)을 검증한다.
 # go/ast 기반으로 소스 코드를 파싱하여 규칙 위반을 검출한다.
-echo "🔍 [3/3] 아키텍처 규칙 검증 중... (make arch)"
+echo "🔍 [4/4] 아키텍처 규칙 검증 중... (make arch)"
 
 make arch
 if [ $? -ne 0 ]; then
@@ -56,7 +72,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-echo "✅ [3/3] 아키텍처 규칙 검증 통과"
+echo "✅ [4/4] 아키텍처 규칙 검증 통과"
 echo ""
 echo "✅ 모든 검사 통과! push를 진행합니다."
 exit 0
