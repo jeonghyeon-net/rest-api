@@ -116,7 +116,7 @@ func NewTestApp(t *testing.T, opts ...fx.Option) (*fiber.App, *sql.DB) {
 	// DI 옵션 구성:
 	//   1. fx.Supply(cfg)    — 테스트용 Config를 DI에 등록
 	//   2. app.AppModule()   — 프로덕션 DI 그래프 전체를 가져옴 (로거, Fiber, DB, 마이그레이션)
-	//   3. fx.Decorate(...)  — AppModule이 제공하는 *sql.DB를 in-memory DB로 교체
+	//   3. fx.Replace(...)   — AppModule이 제공하는 *sql.DB를 in-memory DB로 교체
 	//   4. fx.Options(opts)  — 테스트별 추가 옵션
 	//   5. fx.Populate(...)  — DI 컨테이너에서 값을 꺼내 로컬 변수에 저장
 	//

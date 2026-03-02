@@ -99,6 +99,7 @@ func (s *HealthE2ESuite) TestLivez() {
 	// Fiber의 Test()는 네트워크 레이어를 완전히 건너뛰어 더 빠르다.
 	resp, err := s.app.Test(req)
 	s.Require().NoError(err)
+	defer resp.Body.Close()
 	s.Equal(http.StatusOK, resp.StatusCode)
 }
 
@@ -112,6 +113,7 @@ func (s *HealthE2ESuite) TestReadyz() {
 
 	resp, err := s.app.Test(req)
 	s.Require().NoError(err)
+	defer resp.Body.Close()
 	s.Equal(http.StatusOK, resp.StatusCode)
 }
 
