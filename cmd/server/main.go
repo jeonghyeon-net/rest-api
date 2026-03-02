@@ -36,6 +36,61 @@ import (
 	"go.uber.org/zap"
 )
 
+// Config는 애플리케이션의 모든 설정을 하나의 구조체로 모은 것이다.
+// NestJS의 ConfigService와 같은 역할을 한다.
+//
+// 왜 구조체로 모으는가?
+// 설정이 getEnv("PORT", "42001") 같은 인라인 호출로 여기저기 흩어져 있으면,
+// 어떤 환경변수가 쓰이는지 파악하기 어렵고 테스트에서 값을 교체하기도 힘들다.
+// 구조체로 묶으면:
+//  1. 설정 목록을 한눈에 볼 수 있다
+//  2. fx를 통해 어디서든 *Config를 주입받아 사용할 수 있다
+//  3. 테스트에서 Config를 직접 생성하여 주입할 수 있다
+//
+// NestJS에서 ConfigModule.forRoot()로 설정을 중앙화하고
+// configService.get('PORT')로 접근하는 것과 같은 패턴이다.
+type Config struct {
+	// AppEnv는 실행 환경을 나타낸다. "development" 또는 "production".
+	// 로거 형식, 디버그 모드 등 환경별 동작을 결정한다.
+	AppEnv string
+
+	// Port는 HTTP 서버가 바인딩할 포트 번호다.
+	Port string
+
+	// ReadTimeout은 클라이언트가 요청을 보내는 데 허용되는 최대 시간이다.
+	// Slowloris 공격 방어에 효과적이다.
+	ReadTimeout time.Duration
+
+	// WriteTimeout은 서버가 응답을 보내는 데 허용되는 최대 시간이다.
+	WriteTimeout time.Duration
+
+	// IdleTimeout은 Keep-Alive 연결의 최대 유휴 시간이다.
+	IdleTimeout time.Duration
+
+	// BodyLimit은 요청 바디의 최대 크기(바이트)다.
+	BodyLimit int
+
+	// ShutdownTimeout은 graceful shutdown 시 대기하는 최대 시간이다.
+	ShutdownTimeout time.Duration
+}
+
+// newConfig는 환경변수에서 설정값을 읽어 Config 구조체를 생성한다.
+// fx.Provide()에 의해 DI 컨테이너에 등록되며, *Config 타입이 필요한 곳에 자동 주입된다.
+//
+// 모든 설정은 이 함수에서 한 번에 읽힌다.
+// 환경변수가 없으면 안전한 기본값이 사용된다.
+func newConfig() *Config {
+	return &Config{
+		AppEnv:          getEnv("APP_ENV", "development"),
+		Port:            getEnv("PORT", "42001"),
+		ReadTimeout:     10 * time.Second,
+		WriteTimeout:    10 * time.Second,
+		IdleTimeout:     120 * time.Second,
+		BodyLimit:       4 * 1024 * 1024, // 4MB
+		ShutdownTimeout: 30 * time.Second,
+	}
+}
+
 // main은 애플리케이션의 진입점이다.
 // fx.New()로 DI 컨테이너를 생성하고, Run()으로 애플리케이션을 시작한다.
 //
@@ -56,11 +111,24 @@ func main() {
 		fmt.Printf(".env 파일 로드 건너뜀: %v\n", err)
 	}
 
+	// Config를 fx 바깥에서 먼저 생성한다.
+	// fx.StopTimeout에 Config.ShutdownTimeout 값을 전달하기 위해
+	// fx 컨테이너 생성 전에 Config가 필요하다.
+	//
+	// fx.Supply()는 이미 생성된 값을 DI 컨테이너에 "그대로" 등록한다.
+	// fx.Provide()가 "생성 함수"를 등록하는 것과 달리,
+	// fx.Supply()는 "이미 만들어진 인스턴스"를 등록한다.
+	cfg := newConfig()
+
 	fx.New(
 		// fx.StopTimeout은 앱 종료 시 OnStop 훅들이 완료될 때까지 기다리는 최대 시간이다.
-		// 기본값은 15초인데, graceful shutdown 동안 진행 중인 요청을 충분히 마무리하려면
-		// 넉넉하게 30초로 설정한다. 30초가 지나면 fx가 강제로 종료한다.
-		fx.StopTimeout(30*time.Second),
+		// Config에서 값을 가져와 한 곳에서 관리한다.
+		fx.StopTimeout(cfg.ShutdownTimeout),
+
+		// cfg를 DI 컨테이너에 등록한다.
+		// fx.Supply는 이미 생성된 값을 등록하는 함수다.
+		// fx.Provide(newConfig)와 달리, 함수를 호출하지 않고 cfg 인스턴스를 그대로 등록한다.
+		fx.Supply(cfg),
 
 		// newLogger를 DI 컨테이너에 등록한다.
 		// *zap.Logger 타입이 필요한 곳에 자동으로 주입된다.
@@ -83,9 +151,12 @@ func main() {
 // *fiber.App 타입이 필요한 곳에 자동으로 주입된다.
 //
 // NestJS에서 Express/Fastify 인스턴스를 설정하는 것과 비슷하다.
-func newFiberApp() *fiber.App {
+func newFiberApp(cfg *Config) *fiber.App {
 	// fiber.New()로 새로운 Fiber 앱을 생성한다.
 	// NestJS의 NestFactory.create()에서 내부적으로 Express 인스턴스를 만드는 것과 같다.
+	//
+	// Config 구조체에서 타임아웃, 바디 제한 등의 설정을 읽어온다.
+	// 하드코딩 대신 cfg를 사용하면 테스트에서 설정을 자유롭게 교체할 수 있다.
 	app := fiber.New(fiber.Config{
 		// === JSON 엔진 ===
 		// sonic은 ByteDance(틱톡)가 만든 초고속 JSON 라이브러리다.
@@ -99,29 +170,27 @@ func newFiberApp() *fiber.App {
 		// === 타임아웃 설정 ===
 		// NestJS에서는 @nestjs/platform-express가 내부적으로 처리하지만,
 		// Go에서는 서버 레벨에서 직접 설정해야 한다.
+		// Config 구조체에서 값을 가져와 한 곳에서 관리한다.
 
 		// ReadTimeout: 클라이언트가 요청 헤더+바디를 보내는 데 허용되는 최대 시간.
-		// 10초 안에 요청 전송을 완료하지 못하면 연결이 끊긴다.
 		// Slowloris 공격(헤더를 아주 천천히 보내 서버 자원을 점유하는 공격) 방어에 효과적이다.
-		ReadTimeout: 10 * time.Second,
+		ReadTimeout: cfg.ReadTimeout,
 
 		// WriteTimeout: 서버가 응답을 보내는 데 허용되는 최대 시간.
-		// 응답 생성이 10초를 초과하면 연결이 끊긴다.
 		// 무한정 응답을 대기하는 상황을 방지한다.
-		WriteTimeout: 10 * time.Second,
+		WriteTimeout: cfg.WriteTimeout,
 
 		// IdleTimeout: Keep-Alive 연결에서 다음 요청을 기다리는 최대 유휴 시간.
 		// HTTP/1.1은 기본적으로 Keep-Alive(연결 재사용)를 사용하는데,
-		// 120초 동안 새 요청이 없으면 유휴 연결을 닫아 서버 리소스를 회수한다.
-		IdleTimeout: 120 * time.Second,
+		// 유휴 시간 초과 시 연결을 닫아 서버 리소스를 회수한다.
+		IdleTimeout: cfg.IdleTimeout,
 
 		// === 보안 설정 ===
 
-		// BodyLimit: 요청 바디의 최대 크기를 4MB로 제한한다.
+		// BodyLimit: 요청 바디의 최대 크기를 제한한다.
 		// NestJS에서 app.use(express.json({ limit: '4mb' }))와 같은 역할이다.
 		// 비정상적으로 큰 요청으로 서버 메모리를 고갈시키는 공격을 방어한다.
-		// (참고: Fiber 기본값도 4MB이지만, 명시적으로 선언하여 의도를 드러낸다)
-		BodyLimit: 4 * 1024 * 1024,
+		BodyLimit: cfg.BodyLimit,
 
 		// ServerHeader: 빈 문자열로 설정하면 응답 헤더에 "Server: Fiber" 정보가 포함되지 않는다.
 		// 공격자가 서버 기술 스택을 파악하기 어렵게 만드는 보안 관례(Security by Obscurity)다.
@@ -227,10 +296,8 @@ func getEnv(key, fallback string) string {
 // 환경별 동작:
 //   - development: 사람이 읽기 쉬운 컬러 로그 (zap.NewDevelopment)
 //   - production:  JSON 구조화 로그 (zap.NewProduction)
-func newLogger() (*zap.Logger, error) {
-	env := getEnv("APP_ENV", "development")
-
-	if env == "production" {
+func newLogger(cfg *Config) (*zap.Logger, error) {
+	if cfg.AppEnv == "production" {
 		// 프로덕션: JSON 형태의 구조화 로그
 		// 예: {"level":"error","ts":1709369400,"msg":"서버 에러","port":"42001"}
 		return zap.NewProduction()
@@ -254,9 +321,11 @@ func newLogger() (*zap.Logger, error) {
 // 고루틴 안에서 서버 에러가 발생했을 때, Shutdown()을 호출하면
 // fx의 모든 OnStop 훅이 역순으로 실행되며 앱이 gracefully 종료된다.
 // 이것이 fx 공식 문서에서 권장하는 "post-startup 에러 처리" 패턴이다.
-func startServer(lc fx.Lifecycle, shutdowner fx.Shutdowner, app *fiber.App, logger *zap.Logger) {
-	// 환경변수에서 포트를 읽는다. 없으면 기본값 42001을 사용한다.
-	port := getEnv("PORT", "42001")
+func startServer(lc fx.Lifecycle, shutdowner fx.Shutdowner, app *fiber.App, logger *zap.Logger, cfg *Config) {
+	// Config 구조체에서 포트를 읽는다.
+	// 이전에는 getEnv("PORT", "42001")를 직접 호출했지만,
+	// 이제 Config에서 일괄 관리하므로 설정 변경이 한 곳에서만 이루어진다.
+	port := cfg.Port
 
 	lc.Append(fx.Hook{
 		// OnStart는 앱이 시작될 때 호출된다.
