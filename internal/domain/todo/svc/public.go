@@ -134,9 +134,11 @@ func (s *service) GetTodo(ctx context.Context, id int64) (model.TodoWithTags, er
 // ListTodos는 페이지네이션된 할 일 목록을 반환한다.
 // tag 파라미터가 비어있으면 전체 목록, 값이 있으면 해당 태그로 필터링한다.
 //
-// 각 할 일마다 태그 목록을 별도 조회한다 (N+1 패턴).
-// sqlc.slice()가 SQLite에서 동작하지 않아 IN 쿼리로 한 번에 가져올 수 없으므로
-// 현재는 이 방식을 사용한다. 성능이 문제되면 추후 최적화할 수 있다.
+// 태그 조회에 배치 쿼리(ListByTodoIDs)를 사용하여 N+1 문제를 해결한다.
+// 이전에는 각 할 일마다 ListByTodoID를 개별 호출했으나 (N+1),
+// 지금은 모든 할 일의 ID를 모아 한 번의 쿼리로 태그를 가져온다.
+//
+// NestJS에서 TypeORM의 eager loading이나 DataLoader로 N+1을 해결하는 것과 같다.
 func (s *service) ListTodos(ctx context.Context, page, limit int, tag string) (model.TodoList, error) {
 	var (
 		todos []model.Todo
@@ -158,15 +160,28 @@ func (s *service) ListTodos(ctx context.Context, page, limit int, tag string) (m
 		return model.TodoList{}, fmt.Errorf("할 일 목록 조회 실패: %w", err)
 	}
 
-	// 각 할 일에 대해 태그 목록을 조회하여 TodoWithTags로 조합한다.
-	// N+1 쿼리 패턴: todos가 N개면 태그 조회 쿼리가 N번 추가 실행된다.
+	// 모든 할 일 ID를 모아서 배치 조회한다.
+	// make([]int64, 0, len(todos))로 정확한 크기를 미리 할당한다.
+	todoIDs := make([]int64, 0, len(todos))
+	for _, todo := range todos {
+		todoIDs = append(todoIDs, todo.ID)
+	}
+
+	// 한 번의 쿼리로 모든 할 일에 연결된 태그를 가져온다.
+	// 반환값은 map[todoID][]tagmodel.Tag 형태다.
+	// todoIDs가 비어있으면 내부에서 빈 map을 반환하므로 별도 처리 불필요하다.
+	tagsByTodoID, err := s.tagSvc.ListByTodoIDs(ctx, todoIDs)
+	if err != nil {
+		return model.TodoList{}, fmt.Errorf("태그 배치 조회 실패: %w", err)
+	}
+
+	// 각 할 일에 대응하는 태그 목록을 매핑하여 TodoWithTags로 조합한다.
 	items := make([]model.TodoWithTags, 0, len(todos))
 
 	for _, todo := range todos {
-		tags, err := s.tagSvc.ListByTodoID(ctx, todo.ID)
-		if err != nil {
-			return model.TodoList{}, fmt.Errorf("할 일(ID=%d) 태그 목록 조회 실패: %w", todo.ID, err)
-		}
+		// map에서 존재하지 않는 키를 조회하면 nil 슬라이스를 반환한다.
+		// toTodoTags가 nil을 빈 슬라이스로 변환하므로 JSON 직렬화 시 null이 아닌 []로 출력된다.
+		tags := tagsByTodoID[todo.ID]
 
 		items = append(items, model.TodoWithTags{
 			Todo: todo,
