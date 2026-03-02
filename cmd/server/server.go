@@ -22,7 +22,7 @@ import (
 // *fiber.App 타입이 필요한 곳에 자동으로 주입된다.
 //
 // NestJS에서 Express/Fastify 인스턴스를 설정하는 것과 비슷하다.
-func newFiberApp(cfg *Config) *fiber.App {
+func newFiberApp(cfg *Config, logger *zap.Logger) *fiber.App {
 	// fiber.New()로 새로운 Fiber 앱을 생성한다.
 	// NestJS의 NestFactory.create()에서 내부적으로 Express 인스턴스를 만드는 것과 같다.
 	//
@@ -88,6 +88,13 @@ func newFiberApp(cfg *Config) *fiber.App {
 		// 검증 규칙은 구조체의 validate 태그로 정의한다.
 		// (예: `validate:"required,email"`)
 		StructValidator: newStructValidator(),
+
+		// === 에러 처리 ===
+
+		// ErrorHandler: 핸들러에서 반환된 에러를 JSON 응답으로 변환하는 전역 에러 핸들러다.
+		// NestJS의 전역 ExceptionFilter(@Catch())와 같은 역할이다.
+		// AppError, fiber.Error, ValidationErrors 등 에러 타입별로 적절한 응답을 생성한다.
+		ErrorHandler: newErrorHandler(logger),
 	})
 
 	// 보안/유틸리티 미들웨어를 등록한다.
