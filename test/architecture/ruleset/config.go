@@ -53,7 +53,7 @@ var (
 	// ForbiddenPackageNames: 사용이 금지된 패키지 이름 목록.
 	// 이런 이름의 패키지는 "이 패키지가 뭘 하는지" 알 수 없어서 나쁜 패키지명이다.
 	// 예를 들어 "util" 패키지에는 아무 기능이나 들어갈 수 있어서 점점 비대해진다.
-	ForbiddenPackageNames = []string{"util", "utils", "common", "misc", "helper", "helpers"}
+	ForbiddenPackageNames = []string{"util", "utils", "common", "misc", "helper", "helpers", "shared", "lib"}
 
 	// LayerOrder는 레이어 간 의존성 방향을 인덱스로 정의한다.
 	// 인덱스가 작을수록 안쪽(의존성의 바닥) 레이어다.
@@ -99,7 +99,7 @@ func readModuleName(projectRoot string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close() // 함수가 끝나면 파일을 닫는다 (defer = 지연 실행)
+	defer func() { _ = f.Close() }() // 함수가 끝나면 파일을 닫는다 (defer = 지연 실행)
 
 	// bufio.Scanner를 사용해서 파일을 줄 단위로 읽는다.
 	scanner := bufio.NewScanner(f)

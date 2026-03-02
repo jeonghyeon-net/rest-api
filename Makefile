@@ -1,4 +1,4 @@
-.PHONY: build run dev clean arch
+.PHONY: build run dev clean arch setup
 
 build:
 	go build -o tmp/main .
@@ -14,3 +14,8 @@ arch:
 
 clean:
 	rm -rf tmp
+
+setup:
+	mise install
+	git config core.hooksPath .githooks
+	@echo "✅ 프로젝트 셋업 완료 (도구 설치 + Git hooks 활성화)"

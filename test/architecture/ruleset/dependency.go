@@ -5,26 +5,30 @@ package ruleset
 // DDD(도메인 주도 설계)에서 가장 중요한 규칙은 "의존성 방향"이다.
 // 잘못된 방향으로 의존하면 코드가 서로 얽혀서(커플링) 변경이 어려워진다.
 //
-// 검사하는 5가지 규칙:
+// 검사하는 6가지 규칙:
 //
 // 1. 서브도메인 간 직접 의존 금지 (cross-subdomain)
 //    - 같은 도메인 안의 서브도메인끼리도 직접 import하면 안 된다.
 //    - 예외: 모든 서브도메인은 "core" 서브도메인에 의존할 수 있다.
 //    - 예: role → core ✓, role → billing ✗
 //
-// 2. 도메인 간 직접 의존 금지 (cross-domain)
-//    - 다른 도메인의 내부 패키지를 직접 import하면 안 된다.
-//    - alias.go(타입 별칭) 또는 svc/(공개 서비스)만 사용 가능.
+// 2. 서브도메인에서 도메인 레이어 import 금지 (subdomain-imports-domain-layer)
+//    - 서브도메인은 같은 도메인의 상위 레이어(svc/, handler/, infra/)를 직접 import하면 안 된다.
+//    - alias.go(도메인 루트)만 허용.
 //
-// 3. 레이어 역방향 의존 금지 (layer-direction)
+// 3. 도메인 간 직접 의존 금지 (cross-domain)
+//    - 다른 도메인의 내부 패키지를 직접 import하면 안 된다.
+//    - alias.go(도메인 루트)만 사용 가능.
+//
+// 4. 레이어 역방향 의존 금지 (layer-direction)
 //    - model ← repo ← svc 방향으로만 의존 가능.
 //
-// 4. Saga 의존성 규칙 (saga-*)
-//    - Saga는 도메인의 Public Service(alias.go, svc/)만 import 가능.
-//    - Saga가 도메인 내부(subdomain 등)를 직접 import하면 안 된다.
+// 5. Saga 의존성 규칙 (saga-*)
+//    - Saga는 도메인의 alias.go만 import 가능.
+//    - Saga가 도메인 내부(subdomain, svc 등)를 직접 import하면 안 된다.
 //    - Saga끼리 서로 import하면 안 된다 (각 Saga는 독립적).
 //
-// 5. 서브도메인에서 Saga import 금지 (subdomain-imports-saga)
+// 6. 서브도메인에서 Saga import 금지 (subdomain-imports-saga)
 //    - 서브도메인은 Saga를 import할 수 없다.
 //    - Saga 호출은 Public Service 레이어에서만 가능.
 
@@ -75,6 +79,9 @@ func CheckDependencies(files []*analyzer.FileInfo, cfg *Config) []report.Violati
 
 			// ── 도메인 관련 규칙 (기존) ──
 			if v := checkCrossSubdomain(src, target, f.Path, imp); v != nil {
+				violations = append(violations, *v)
+			}
+			if v := checkSubdomainImportsDomainLayer(src, target, f.Path, imp); v != nil {
 				violations = append(violations, *v)
 			}
 			if v := checkCrossDomain(src, target, f.Path, imp); v != nil {
@@ -228,7 +235,63 @@ func checkCrossSubdomain(src, target *analyzer.DomainPath, file string, imp anal
 }
 
 // ──────────────────────────────────────────────
-// 규칙 2: 도메인 간 직접 의존 금지
+// 규칙 2: 서브도메인에서 도메인 레이어 import 금지
+// ──────────────────────────────────────────────
+
+// checkSubdomainImportsDomainLayer는 서브도메인이 같은 도메인의 상위 레이어를
+// import하는 것을 감지한다.
+//
+// 서브도메인은 도메인의 "구현 세부사항"이다.
+// 도메인 수준의 svc/, handler/, infra/는 서브도메인 위에서 조율하는 레이어이므로,
+// 서브도메인이 이들을 import하면 의존성 방향이 뒤집힌다.
+//
+// NestJS 비유:
+//
+//	NestJS에서 Repository(데이터 계층)가 Controller(요청 처리 계층)를 import하면
+//	이상하듯이, 서브도메인(내부 구현)이 도메인 수준 서비스(외부 조율)를 import하면 안 된다.
+//
+// 허용:
+//   - subdomain → domain root (alias.go): ✓ (Public 타입 접근)
+//
+// 금지:
+//   - subdomain → domain svc/ (App Service): ✗
+//   - subdomain → domain handler/: ✗
+//   - subdomain → domain infra/: ✗
+func checkSubdomainImportsDomainLayer(src, target *analyzer.DomainPath, file string, imp analyzer.ImportInfo) *report.Violation {
+	// Saga 파일은 이 규칙의 대상이 아님
+	if src.IsSaga || target.IsSaga {
+		return nil
+	}
+	// src가 서브도메인 파일이 아니면 이 규칙의 대상이 아님
+	if src.Subdomain == "" {
+		return nil
+	}
+	// 같은 도메인 내에서만 적용
+	if src.Domain != target.Domain {
+		return nil
+	}
+	// target이 서브도메인이면 다른 규칙(checkCrossSubdomain)에서 처리
+	if target.Subdomain != "" {
+		return nil
+	}
+	// domain root (alias.go)는 허용 — 블로그 매트릭스에서 "Public: ✓"
+	if target.Layer == "root" {
+		return nil
+	}
+
+	// svc/, handler/, infra/ 등 도메인 수준 레이어 import는 금지
+	return &report.Violation{
+		Rule:     "dependency/subdomain-imports-domain-layer",
+		Severity: report.Error,
+		Message:  fmt.Sprintf("subdomain %q in domain %q imports domain-level %s/", src.Subdomain, src.Domain, target.Layer),
+		File:     file,
+		Line:     imp.Line,
+		Fix:      "subdomains cannot depend on domain-level layers (svc/, handler/, infra/)",
+	}
+}
+
+// ──────────────────────────────────────────────
+// 규칙 3: 도메인 간 직접 의존 금지
 // ──────────────────────────────────────────────
 
 // checkCrossDomain은 다른 도메인의 내부 패키지를 직접 import하는 것을 감지한다.

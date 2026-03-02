@@ -5,10 +5,10 @@ package ruleset
 // 좋은 이름은 코드 가독성의 핵심이다. 특히 Go에서는 패키지명이 타입/함수 앞에 붙기 때문에
 // 네이밍 규칙이 더 중요하다.
 //
-// 검사하는 3가지 규칙:
+// 검사하는 5가지 규칙:
 //
 // 1. 금지된 패키지명 (forbidden-package)
-//    - util, common, misc, helper 같은 "아무거나 넣는" 패키지명 금지
+//    - util, common, misc, helper, shared, lib 같은 "아무거나 넣는" 패키지명 금지
 //    - 이런 패키지는 책임이 불분명해서 점점 비대해진다 (God Object 패턴)
 //
 // 2. 패키지 스터터 (package-stutter)
@@ -20,9 +20,18 @@ package ruleset
 //    - 타입 이름에 "Impl"을 붙이지 않는다.
 //    - 구현체는 소문자로 시작하는 비공개(unexported) 이름을 사용한다.
 //    - 예: UserServiceImpl ✗ → userService ✓
+//
+// 4. 파일명-인터페이스명 일치 (file-interface-match)
+//    - svc/, repo/ 파일에 공개 인터페이스가 있으면 파일명과 일치해야 한다.
+//    - 예: install.go → Install 인터페이스가 있어야 한다.
+//
+// 5. 레이어 접미사 파일명 금지 (layer-suffix-filename)
+//    - 파일명에 레이어명을 접미사로 붙이지 않는다.
+//    - 예: install_svc.go ✗ → install.go ✓ (디렉토리가 이미 레이어를 표현)
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"rest-api/test/architecture/analyzer"
@@ -47,6 +56,20 @@ func CheckNaming(files []*analyzer.FileInfo, cfg *Config) []report.Violation {
 			}
 			// 규칙 3: Impl 접미사 검사
 			if v := checkImplSuffix(f, t); v != nil {
+				violations = append(violations, *v)
+			}
+		}
+
+		// 파일 경로 기반 규칙은 도메인 경로 정보가 필요하다
+		relPath, _ := filepath.Rel(cfg.ProjectRoot, f.Path)
+		dp := analyzer.ParseDomainPath(relPath)
+		if dp != nil {
+			// 규칙 4: 파일명-인터페이스명 일치 검사
+			if v := checkFileInterfaceMatch(f, dp); v != nil {
+				violations = append(violations, *v)
+			}
+			// 규칙 5: 레이어 접미사 파일명 검사
+			if v := checkLayerSuffixFilename(f, dp); v != nil {
 				violations = append(violations, *v)
 			}
 		}
@@ -157,5 +180,117 @@ func checkImplSuffix(f *analyzer.FileInfo, t analyzer.TypeInfo) *report.Violatio
 			Fix:      "use an unexported name for the implementation struct",
 		}
 	}
+	return nil
+}
+
+// ──────────────────────────────────────────────
+// 규칙 4: 파일명-인터페이스명 일치
+// ──────────────────────────────────────────────
+
+// checkFileInterfaceMatch는 파일에 공개 인터페이스가 있을 때
+// 파일명과 인터페이스명이 일치하는지 검사한다.
+//
+// svc/와 repo/ 레이어에서만 적용된다 (인터페이스가 핵심인 레이어).
+// model/ 레이어는 struct가 주력이므로 제외.
+//
+// 파일명 → 인터페이스명 변환 규칙:
+//   - snake_case → PascalCase
+//   - install.go → Install
+//   - create_order.go → CreateOrder
+//
+// 예: svc/install.go 안에 Install 인터페이스가 없으면 위반.
+func checkFileInterfaceMatch(f *analyzer.FileInfo, dp *analyzer.DomainPath) *report.Violation {
+	// svc/와 repo/ 레이어에서만 적용
+	if dp.Layer != "svc" && dp.Layer != "repo" {
+		return nil
+	}
+
+	// 파일에 공개 인터페이스가 하나도 없으면 검사하지 않음
+	// (struct만 있는 파일, 유틸리티 함수만 있는 파일 등)
+	hasExportedInterface := false
+	for _, t := range f.Types {
+		if t.IsInterface && t.IsExported {
+			hasExportedInterface = true
+			break
+		}
+	}
+	if !hasExportedInterface {
+		return nil
+	}
+
+	// 파일명에서 기대하는 인터페이스명을 도출
+	baseName := strings.TrimSuffix(filepath.Base(f.Path), ".go")
+	expected := snakeToPascal(baseName)
+
+	// 파일 안에 기대하는 이름의 인터페이스가 있는지 확인
+	for _, t := range f.Types {
+		if t.IsInterface && t.IsExported && t.Name == expected {
+			return nil // 일치하는 인터페이스 발견
+		}
+	}
+
+	// 공개 인터페이스가 있지만 파일명과 일치하는 것이 없음
+	return &report.Violation{
+		Rule:     "naming/file-interface-match",
+		Severity: report.Warning,
+		Message:  fmt.Sprintf("file %q should contain interface %q", filepath.Base(f.Path), expected),
+		File:     f.Path,
+		Fix:      fmt.Sprintf("rename file or interface so they match (e.g., %s.go → %s interface)", baseName, expected),
+	}
+}
+
+// snakeToPascal은 snake_case 문자열을 PascalCase로 변환한다.
+//
+// 예:
+//
+//	"install"      → "Install"
+//	"create_order" → "CreateOrder"
+//	"user"         → "User"
+func snakeToPascal(s string) string {
+	parts := strings.Split(s, "_")
+	for i, p := range parts {
+		if len(p) > 0 {
+			parts[i] = strings.ToUpper(p[:1]) + p[1:]
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+// ──────────────────────────────────────────────
+// 규칙 5: 레이어 접미사 파일명 금지
+// ──────────────────────────────────────────────
+
+// checkLayerSuffixFilename은 파일명에 레이어 이름이 접미사로 포함되었는지 검사한다.
+//
+// 파일이 어떤 레이어에 속하는지는 디렉토리 경로가 이미 표현하고 있다.
+// 파일명에 또 레이어를 붙이면 정보가 중복된다.
+//
+// 나쁜 예:
+//   - subdomain/core/svc/install_svc.go  ← "_svc"가 불필요 (이미 svc/ 안에 있음)
+//   - subdomain/core/model/user_model.go ← "_model"이 불필요
+//   - subdomain/core/repo/user_repo.go   ← "_repo"가 불필요
+//
+// 좋은 예:
+//   - subdomain/core/svc/install.go
+//   - subdomain/core/model/user.go
+//   - subdomain/core/repo/user.go
+func checkLayerSuffixFilename(f *analyzer.FileInfo, dp *analyzer.DomainPath) *report.Violation {
+	baseName := strings.TrimSuffix(filepath.Base(f.Path), ".go")
+
+	// 각 레이어 이름을 접미사로 검사
+	for _, layer := range AllowedSubdomainLayers {
+		suffix := "_" + layer
+		if strings.HasSuffix(baseName, suffix) {
+			cleaned := strings.TrimSuffix(baseName, suffix)
+			return &report.Violation{
+				Rule:     "naming/layer-suffix-filename",
+				Severity: report.Error,
+				Message:  fmt.Sprintf("filename %q contains layer suffix %q", baseName+".go", suffix),
+				File:     f.Path,
+				Fix:      fmt.Sprintf("rename to %q (directory already expresses the layer)", cleaned+".go"),
+			}
+		}
+	}
+
 	return nil
 }
