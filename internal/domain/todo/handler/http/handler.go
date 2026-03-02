@@ -55,7 +55,7 @@ import (
 type CreateTodoInput struct {
 	Body struct {
 		Title string `doc:"할 일 제목"         json:"title"         maxLength:"200" minLength:"1"    required:"true"`
-		Body  string `default:""           doc:"할 일 내용"         json:"body"     maxLength:"5000"`
+		Body  string `default:""           doc:"할 일 내용"         json:"body"     maxLength:"5000" required:"false"`
 	}
 }
 

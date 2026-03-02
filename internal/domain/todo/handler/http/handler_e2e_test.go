@@ -26,6 +26,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/suite"
 	"go.uber.org/fx"
@@ -79,10 +80,11 @@ func (s *TodoE2ESuite) SetupSuite() {
 		// main.go의 fx.Provide(todohttp.New)와 동일하다.
 		fx.Provide(todohttp.New),
 
-		// 핸들러의 라우트를 Fiber 앱에 등록한다.
-		// main.go의 fx.Invoke(func(fiberApp *fiber.App, h todohttp.Handler) { ... })와 동일하다.
-		fx.Invoke(func(fiberApp *fiber.App, h todohttp.Handler) {
-			h.RegisterRoutes(fiberApp)
+		// 핸들러의 라우트를 huma API에 등록한다.
+		// huma.API는 AppModule의 fx.Provide(newHumaAPI)에서 주입된다.
+		// main.go의 fx.Invoke(func(api huma.API, h todohttp.Handler) { ... })와 동일하다.
+		fx.Invoke(func(api huma.API, h todohttp.Handler) {
+			h.RegisterRoutes(api)
 		}),
 	)
 }
