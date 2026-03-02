@@ -37,6 +37,16 @@ func (e *AppError) Error() string {
 	return e.Message
 }
 
+// GetStatus는 huma의 StatusError 인터페이스를 구현한다.
+// huma는 핸들러에서 반환된 에러에 이 메서드가 있으면
+// 반환값을 HTTP 응답 상태 코드로 사용한다.
+//
+// 이 메서드 덕분에 기존 서비스 레이어의 AppError가
+// huma 핸들러에서도 그대로 동작한다.
+func (e *AppError) GetStatus() int {
+	return e.Status
+}
+
 // NewAppError는 새로운 AppError를 생성한다.
 // 핸들러에서 특정 에러를 반환할 때 사용한다.
 //
