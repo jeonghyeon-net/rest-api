@@ -1,3 +1,5 @@
 tmp/
 rest-api
 .env
+data/
+docs/
