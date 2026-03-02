@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/joho/godotenv"
 	// automaxprocs는 우버가 만든 라이브러리로, 앱 시작 시 GOMAXPROCS를 자동으로 설정한다.
 	// GOMAXPROCS는 Go 런타임이 동시에 사용할 수 있는 OS 스레드 수를 결정하는 값이다.
 	//
@@ -18,8 +19,6 @@ import (
 	// blank import(_)는 패키지를 직접 사용하지 않지만, init() 함수의 부수효과(side effect)를
 	// 위해 임포트하는 Go 관용 패턴이다. automaxprocs의 init()이 자동으로 GOMAXPROCS를 설정한다.
 	_ "go.uber.org/automaxprocs"
-
-	"github.com/joho/godotenv"
 	"go.uber.org/fx"
 )
 

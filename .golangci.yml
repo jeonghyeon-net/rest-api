@@ -157,6 +157,7 @@ linters:
     # 예: //nolint:errcheck // 이 에러는 의도적으로 무시한다
     - nolintlint
 
+
   settings:
     revive:
       rules:
@@ -242,3 +243,28 @@ formatters:
     # gofumpt: gofmt의 상위 호환 포매터. gofmt 규칙에 추가 정리 규칙을 적용한다.
     # 예: 불필요한 빈 줄 제거, 함수 인자 정렬 등.
     - gofumpt
+
+    # gci: import 문을 3그룹으로 자동 정렬하는 포매터다.
+    # 우버 스타일 가이드 권장: 표준 라이브러리 → 외부 패키지 → 내부 패키지
+    # NestJS에서 import 순서를 ESLint/Prettier로 강제하는 것과 같다.
+    - gci
+
+  settings:
+    gci:
+      # import 문을 3그룹으로 나누어 빈 줄로 구분한다.
+      # 우버 Go 스타일 가이드의 "Import Group Ordering" 규칙을 강제한다.
+      #
+      # 정렬 결과 예시:
+      #   import (
+      #       "context"           // 1그룹: 표준 라이브러리
+      #       "fmt"
+      #
+      #       "github.com/..."    // 2그룹: 외부 패키지
+      #       "go.uber.org/..."
+      #
+      #       "rest-api/..."      // 3그룹: 프로젝트 내부 패키지
+      #   )
+      sections:
+        - standard                    # Go 표준 라이브러리 (fmt, net/http, context 등)
+        - default                     # 외부 의존성 (github.com/*, go.uber.org/* 등)
+        - prefix(rest-api)            # 프로젝트 내부 패키지
