@@ -434,6 +434,12 @@ linters:
         - anon
         - generic
         - "go\\.uber\\.org/fx"
+        # huma.API: huma 어댑터와 DI에서 huma.API 인터페이스 반환이 필수적이다.
+        # huma.NewAPI()가 인터페이스를 반환하며, 어댑터도 동일 타입을 반환해야 한다.
+        - "github\\.com/danielgtaylor/huma"
+        # fiber.Ctx: huma 어댑터에서 Fiber 컨텍스트 언래핑 시 인터페이스 반환이 필수적이다.
+        # Fiber v3에서 Ctx는 인터페이스 타입이므로 구체 타입 반환이 불가능하다.
+        - "github\\.com/gofiber/fiber"
 
     # depguard: 금지 패키지 규칙.
     # "log" 패키지를 금지하여 go.uber.org/zap 사용을 강제한다.
@@ -448,10 +454,23 @@ linters:
 
     # wrapcheck: 에러 래핑 검사 제외 패키지.
     # 프로젝트 내부(rest-api/*) 에러는 이미 컨텍스트가 충분하므로 래핑 불필요.
-    # 외부 패키지(sql, fiber 등)에서 오는 에러만 %w 래핑을 강제한다.
+    # Fiber 핸들러의 c.JSON(), c.SendStatus() 등은 HTTP 응답을 클라이언트에 보내는
+    # 터미널 동작이다. 이 에러를 래핑해도 상위 호출자(Fiber 프레임워크)가 활용하지 않으므로
+    # 래핑이 무의미하다. NestJS에서 res.json()의 반환값을 래핑하지 않는 것과 같다.
+    # golangci-lint v2에서는 모든 설정 키가 kebab-case다.
+    # (camelCase인 ignorePackageGlobs는 v2에서 유효하지 않다)
     wrapcheck:
-      ignorePackageGlobs:
+      # 프로젝트 내부(rest-api/*) 에러는 이미 컨텍스트가 충분하므로 래핑 불필요.
+      # Fiber 패키지(github.com/gofiber/fiber/*)의 에러도 래핑 불필요 —
+      # c.JSON(), c.SendStatus() 등은 HTTP 응답을 보내는 터미널 동작이다.
+      ignore-package-globs:
         - "rest-api/*"
+        - "github.com/gofiber/fiber/*"
+      # Fiber의 c.JSON(), c.SendStatus()는 인터페이스(fiber.Ctx) 메서드 호출이다.
+      # wrapcheck는 인터페이스 메서드와 일반 함수 호출을 별도로 검사하므로
+      # ignore-package-globs와 ignore-interface-regexps 두 가지 설정이 모두 필요하다.
+      ignore-interface-regexps:
+        - "Ctx"
 
     # varnamelen: 변수명 길이 규칙.
     # max-distance: 선언~마지막 사용 간 최대 6줄 (짧은 스코프에서는 짧은 이름 OK).
