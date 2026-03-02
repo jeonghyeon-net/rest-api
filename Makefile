@@ -10,6 +10,13 @@
 # 명령을 실행하지 않는다. .PHONY로 선언하면 항상 실행된다.
 .PHONY: build run dev clean test e2e test-all arch setup docker fmt lint sqlc-gen migrate-new migrate-up migrate-down migrate-status
 
+# .env 파일이 있으면 환경변수로 로드한다.
+# 앞에 - 를 붙이면 파일이 없어도 에러가 발생하지 않는다.
+# NestJS에서 dotenv가 .env를 자동 로드하는 것과 같은 역할이다.
+# 이렇게 하면 .env에 정의된 DB_PATH 등이 Makefile 변수로 설정되어,
+# 아래의 ?= 기본값보다 우선한다.
+-include .env
+
 # ── 변수 ────────────────────────────────────────────────────────────────────
 
 # 기본 DB 경로.
