@@ -2,13 +2,14 @@
 //
 // "go test ./test/architecture/..." 명령으로 실행하면
 // 프로젝트의 모든 Go 소스 파일을 AST(추상 구문 트리)로 파싱해서
-// 5가지 카테고리의 아키텍처 규칙을 검증한다:
+// 6가지 카테고리의 아키텍처 규칙을 검증한다:
 //
 //  1. Dependencies (의존성): import 방향이 올바른지
 //  2. Naming (네이밍): 패키지명, 타입명이 규칙을 따르는지
 //  3. InterfacePatterns (인터페이스 패턴): 인터페이스+구현체+생성자 패턴
 //  4. Structure (구조): 디렉토리 구조가 정해진 형태인지
 //  5. Sqlc (코드 생성): sqlc 설정 완전성 + 수기 코드 차단
+//  6. Testing (테스트 품질): goleak goroutine 누수 검출 강제
 //
 // 핵심 원칙:
 //
@@ -146,6 +147,13 @@ func TestArchitecture(t *testing.T) {
 	// ── 서브테스트 5: sqlc 규칙 ──
 	t.Run("Sqlc", func(t *testing.T) {
 		vs := ruleset.CheckSqlc(cfg)
+		allViolations = append(allViolations, vs...)
+		reportViolations(t, vs)
+	})
+
+	// ── 서브테스트 6: 테스트 품질 규칙 ──
+	t.Run("Testing", func(t *testing.T) {
+		vs := ruleset.CheckTestingPatterns(cfg)
 		allViolations = append(allViolations, vs...)
 		reportViolations(t, vs)
 	})
