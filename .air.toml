@@ -1,0 +1,12 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  bin = "./tmp/main"
+  cmd = "go build -o ./tmp/main ."
+  exclude_dir = ["tmp", ".git", ".claude"]
+  include_ext = ["go"]
+  send_interrupt = true
+
+[misc]
+  clean_on_exit = true
