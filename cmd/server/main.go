@@ -7,6 +7,22 @@ import (
 	"os"
 	"time"
 
+	// automaxprocs는 우버가 만든 라이브러리로, 앱 시작 시 GOMAXPROCS를 자동으로 설정한다.
+	// GOMAXPROCS는 Go 런타임이 동시에 사용할 수 있는 OS 스레드 수를 결정하는 값이다.
+	//
+	// 왜 필요한가?
+	// Docker/K8s에서 컨테이너에 CPU를 2코어만 할당해도, Go는 기본적으로 호스트 머신의
+	// 전체 CPU 수(예: 64코어)를 GOMAXPROCS로 설정한다.
+	// 이러면 64개 스레드가 2코어를 두고 경쟁하면서 컨텍스트 스위칭 오버헤드가 발생하고,
+	// 오히려 성능이 떨어진다.
+	//
+	// automaxprocs는 cgroup(리눅스 컨테이너의 리소스 제한 메커니즘)을 읽어서
+	// 컨테이너에 할당된 실제 CPU 수에 맞게 GOMAXPROCS를 자동 조정한다.
+	//
+	// blank import(_)는 패키지를 직접 사용하지 않지만, init() 함수의 부수효과(side effect)를
+	// 위해 임포트하는 Go 관용 패턴이다. automaxprocs의 init()이 자동으로 GOMAXPROCS를 설정한다.
+	_ "go.uber.org/automaxprocs"
+
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/compress"
