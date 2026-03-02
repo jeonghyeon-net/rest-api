@@ -2,5 +2,6 @@ tmp/
 rest-api
 /server
 .env
+.vscode/
 data/
 docs/

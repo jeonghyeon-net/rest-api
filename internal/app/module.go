@@ -76,9 +76,12 @@ func AppModule() fx.Option {
 		//   providers: [DatabaseService]  // ConfigService는 DI가 자동 주입
 		fx.Provide(db.NewDB),
 
-		// 마이그레이션을 별도 단계로 실행한다.
-		// NewDB와 분리하여 fx.Invoke로 등록하면, *sql.DB가 주입된 후 자동 실행된다.
-		// 테스트에서 fx.Replace로 DB를 교체해도 교체된 DB에 마이그레이션이 실행된다.
-		fx.Invoke(db.RunMigrations),
+		// 마이그레이션은 여기서 실행하지 않는다.
+		// 프로덕션에서는 서버 부팅 전에 make migrate-up으로 별도 실행한다.
+		// fx.Invoke로 마이그레이션을 실행하면 fx.StartTimeout(기본 15초) 안에
+		// 마이그레이션이 완료되어야 하므로, 무거운 마이그레이션에서 앱이 죽을 수 있다.
+		//
+		// E2E 테스트에서는 in-memory DB를 매번 새로 만들므로,
+		// testutil.NewTestApp()에서 fx.Invoke(db.RunMigrations)를 직접 추가한다.
 	)
 }

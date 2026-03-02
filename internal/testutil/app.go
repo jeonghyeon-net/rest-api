@@ -36,6 +36,7 @@ import (
 
 	"rest-api/internal/app"
 	"rest-api/internal/config"
+	"rest-api/internal/db"
 )
 
 // NewTestApp은 E2E 테스트용 Fiber 앱과 in-memory DB를 생성하여 반환한다.
@@ -150,6 +151,12 @@ func NewTestApp(t *testing.T, opts ...fx.Option) (*fiber.App, *sql.DB) {
 		// NestJS에서 .overrideProvider(DatabaseService).useValue(mockDb)와 같다.
 		fx.Replace(memDB),
 
+		// E2E 테스트에서는 in-memory DB를 매번 새로 만들므로 마이그레이션이 필수다.
+		// 프로덕션에서는 서버 부팅과 별도로 make migrate-up으로 실행하지만,
+		// 테스트에서는 매번 빈 DB에 스키마를 만들어야 하므로 여기서 자동 실행한다.
+		// in-memory SQLite의 마이그레이션은 거의 즉시 완료되므로 타임아웃 걱정이 없다.
+		fx.Invoke(db.RunMigrations),
+
 		// 테스트별 추가 옵션을 적용한다.
 		// 예: 특정 도메인 모듈을 추가하거나, mock 서비스를 등록할 수 있다.
 		fx.Options(opts...),
@@ -165,7 +172,7 @@ func NewTestApp(t *testing.T, opts ...fx.Option) (*fiber.App, *sql.DB) {
 	// fxtest의 RequireStart()는 DI 그래프의 모든 OnStart 훅을 실행한다.
 	// 실패하면 t.Fatal()로 테스트를 즉시 중단한다.
 	// 여기서 실행되는 훅:
-	//   - db.RunMigrations: memDB에 마이그레이션 적용 (테이블 생성 등)
+	//   - db.RunMigrations: 위에서 fx.Invoke로 등록했으므로 memDB에 마이그레이션 적용
 	//   - (StartServer는 포함되지 않음 — main.go에서만 fx.Invoke)
 	fxApp.RequireStart()
 

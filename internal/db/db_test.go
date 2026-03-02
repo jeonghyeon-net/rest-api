@@ -17,7 +17,31 @@ package db
 import (
 	"path/filepath"
 	"testing"
+
+	"go.uber.org/goleak"
 )
+
+// TestMain은 이 패키지의 모든 테스트를 감싸는 진입점이다.
+//
+// Go의 testing 패키지에서 TestMain이라는 이름은 특별한 의미를 가진다:
+// 이 함수가 정의되면, go test가 Test* 함수를 직접 실행하지 않고
+// TestMain을 먼저 호출한다. m.Run()으로 실제 테스트를 실행하고,
+// os.Exit()으로 결과를 반환한다.
+//
+// NestJS에서 Jest의 globalSetup/globalTeardown과 유사한 역할이다.
+//
+// goleak.VerifyTestMain(m)은 Uber의 goroutine 누수 검출기다.
+// 모든 테스트가 끝난 후 아직 실행 중인 goroutine이 있으면 테스트를 실패시킨다.
+// goroutine은 Go의 경량 스레드로, NestJS에서 Promise가 resolve되지 않고
+// 메모리에 남아있는 것과 비슷한 문제를 감지한다.
+//
+// 왜 필요한가?
+// DB 연결, 타이머, 채널 등을 사용하는 코드에서 goroutine이 정리되지 않으면
+// 메모리 누수와 예측 불가능한 동작이 발생한다.
+// goleak은 이런 누수를 테스트 시점에 잡아준다.
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m)
+}
 
 // TestOpenDB는 openDB 함수가 SQLite 데이터베이스를 올바르게 여는지 검증한다.
 //
@@ -42,9 +66,6 @@ func TestOpenDB(t *testing.T) {
 	// 같은 패키지(package db)에 있는 테스트 파일이므로 접근 가능하다.
 	db, err := openDB(path)
 	if err != nil {
-		// t.Fatalf는 에러 메시지를 출력하고 이 테스트를 즉시 중단한다.
-		// %v는 Go의 포맷 동사(format verb)로, 값을 기본 형식으로 출력한다.
-		// NestJS에서 throw new Error(`openDB 실패: ${err}`)와 유사하다.
 		t.Fatalf("openDB 실패: %v", err)
 	}
 
@@ -66,38 +87,55 @@ func TestOpenDB(t *testing.T) {
 		t.Fatalf("DB Ping 실패: %v", err)
 	}
 
-	// ─── WAL 모드 확인 ──────────────────────────────────────────────────
-	// PRAGMA journal_mode는 SQLite의 저널링 방식을 반환한다.
-	// WAL(Write-Ahead Logging) 모드는 읽기와 쓰기를 동시에 허용하는 모드로,
-	// 기본 DELETE 모드보다 동시성이 훨씬 좋다.
+	// ─── PRAGMA 설정 검증 (테이블 주도 테스트) ──────────────────────────
 	//
-	// QueryRow()는 단일 행을 조회한다. NestJS에서 db.query(...).then(rows => rows[0])과 유사.
-	// Scan()은 조회 결과를 Go 변수에 바인딩한다. 포인터(&)를 전달해야 값이 채워진다.
-	// Go에서 &는 변수의 메모리 주소(포인터)를 얻는 연산자다.
-	// NestJS에서는 참조 타입이 기본이지만, Go에서는 명시적으로 포인터를 전달해야 한다.
-	// ────────────────────────────────────────────────────────────────────
-	var journalMode string
-	if err := db.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
-		t.Fatalf("journal_mode 조회 실패: %v", err)
-	}
-	if journalMode != "wal" {
-		// t.Errorf는 에러를 기록하지만 테스트를 중단하지 않는다.
-		// 이 검사가 실패해도 다음 검사(foreign_keys)까지 실행된다.
-		// %q는 문자열을 따옴표로 감싸서 출력하는 포맷 동사다. 디버깅 시 유용하다.
-		t.Errorf("journal_mode: got %q, want %q", journalMode, "wal")
+	// 테이블 주도 테스트(table-driven test)는 Go에서 가장 널리 쓰이는 테스트 패턴이다.
+	// 테스트 케이스를 구조체 슬라이스로 정의하고, 반복문으로 각 케이스를 실행한다.
+	//
+	// NestJS/Jest의 it.each() 또는 describe.each()와 같은 개념이다:
+	//
+	//   it.each([
+	//     ['journal_mode', 'wal'],
+	//     ['foreign_keys', '1'],
+	//   ])('PRAGMA %s should be %s', (pragma, expected) => { ... });
+	//
+	// 장점:
+	//   - 새 PRAGMA 검증을 추가할 때 구조체만 추가하면 된다 (로직 변경 불필요)
+	//   - 각 케이스가 t.Run()의 서브테스트로 실행되어 개별 실패 추적이 가능하다
+	//   - 테스트 실패 시 어떤 PRAGMA가 실패했는지 이름으로 바로 확인할 수 있다
+	pragmaTests := []struct {
+		name  string // 서브테스트 이름 겸 PRAGMA 이름 — go test -run TestOpenDB/journal_mode 형태로 개별 실행 가능
+		query string // 실행할 PRAGMA 쿼리
+		want  string // 기대하는 결과값
+	}{
+		// WAL(Write-Ahead Logging) 모드는 읽기와 쓰기를 동시에 허용하는 모드로,
+		// 기본 DELETE 모드보다 동시성이 훨씬 좋다.
+		{name: "journal_mode", query: "PRAGMA journal_mode", want: "wal"},
+		// SQLite는 기본적으로 외래 키 제약을 무시한다.
+		// foreign_keys=ON으로 명시적으로 활성화해야 한다.
+		// 결과값 "1"은 활성화 상태를 의미한다 (0=비활성, 1=활성).
+		{name: "foreign_keys", query: "PRAGMA foreign_keys", want: "1"},
+		// busy_timeout은 잠금 충돌 시 즉시 실패하지 않고 대기하는 시간(ms)이다.
+		// 5000ms 동안 기다려도 잠금이 풀리지 않으면 "database is locked" 에러를 반환한다.
+		{name: "busy_timeout", query: "PRAGMA busy_timeout", want: "5000"},
 	}
 
-	// ─── Foreign Keys 활성화 확인 ──────────────────────────────────────
-	// SQLite는 기본적으로 외래 키(foreign key) 제약을 무시한다.
-	// PRAGMA foreign_keys = ON으로 명시적으로 활성화해야 한다.
-	// PostgreSQL/MySQL에서는 기본 활성화지만 SQLite는 아니다.
-	// ────────────────────────────────────────────────────────────────────
-	var foreignKeys int
-	if err := db.QueryRow("PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
-		t.Fatalf("foreign_keys 조회 실패: %v", err)
-	}
-	if foreignKeys != 1 {
-		t.Errorf("foreign_keys: got %d, want 1", foreignKeys)
+	for _, tt := range pragmaTests {
+		// t.Run()은 서브테스트를 생성한다.
+		// NestJS의 it() 블록 하나와 같다.
+		// 실행 시 "TestOpenDB/journal_mode" 형태로 출력되어 어떤 케이스가 실패했는지 알 수 있다.
+		// go test -run TestOpenDB/journal_mode 로 특정 케이스만 실행할 수도 있다.
+		t.Run(tt.name, func(t *testing.T) {
+			var got string
+			// QueryRow()는 단일 행을 조회한다. NestJS에서 db.query(...).then(rows => rows[0])과 유사.
+			// Scan()은 조회 결과를 Go 변수에 바인딩한다. 포인터(&)를 전달해야 값이 채워진다.
+			if err := db.QueryRow(tt.query).Scan(&got); err != nil {
+				t.Fatalf("%s 조회 실패: %v", tt.name, err)
+			}
+			if got != tt.want {
+				t.Errorf("%s: got %q, want %q", tt.name, got, tt.want)
+			}
+		})
 	}
 }
 

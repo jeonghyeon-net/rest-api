@@ -36,9 +36,31 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/suite"
+	"go.uber.org/goleak"
 
 	"rest-api/internal/testutil"
 )
+
+// TestMain은 이 패키지의 모든 테스트를 감싸는 진입점이다.
+//
+// goleak.VerifyTestMain(m)은 모든 테스트가 끝난 후
+// 아직 실행 중인 goroutine이 있으면 테스트를 실패시킨다.
+// fx, Fiber 등이 내부적으로 goroutine을 생성하므로,
+// 테스트 정리(cleanup)가 제대로 되는지 검증하는 데 유용하다.
+func TestMain(m *testing.M) {
+	// goleak.IgnoreTopFunction()으로 특정 goroutine을 무시 목록에 추가한다.
+	// fasthttp(Fiber의 기반 라이브러리)는 내부적으로 updateServerDate goroutine을
+	// 생성하여 HTTP Date 헤더를 주기적으로 갱신한다.
+	// 이 goroutine은 fasthttp가 관리하는 것으로, 우리 코드의 누수가 아니다.
+	// 무시하지 않으면 모든 Fiber 테스트에서 false positive가 발생한다.
+	goleak.VerifyTestMain(m,
+		// fasthttp.updateServerDate의 내부 goroutine을 무시한다.
+		// 이 goroutine은 time.Sleep 루프로 Date 헤더를 갱신하므로
+		// 스택 최상단이 time.Sleep이다.
+		// IgnoreAnyFunction은 스택 어디에든 해당 함수가 있으면 무시한다.
+		goleak.IgnoreAnyFunction("github.com/valyala/fasthttp.updateServerDate.func1"),
+	)
+}
 
 // HealthE2ESuite는 헬스체크 E2E 테스트를 묶는 테스트 스위트다.
 //
@@ -79,42 +101,65 @@ func (s *HealthE2ESuite) SetupSuite() {
 	s.app, s.db = testutil.NewTestApp(s.T())
 }
 
-// TestLivez는 Liveness Probe 엔드포인트를 검증한다.
+// TestHealthEndpoints는 헬스체크 엔드포인트를 테이블 주도 테스트로 검증한다.
 //
-// GET /livez는 프로세스가 살아있는지 확인하는 쿠버네티스 표준 엔드포인트다.
-// 어떤 외부 의존성(DB 등) 장애와 무관하게 항상 200 OK를 반환해야 한다.
+// 테이블 주도 테스트(table-driven test)는 Go에서 가장 널리 쓰이는 테스트 패턴이다.
+// 테스트 케이스를 구조체 슬라이스로 정의하고, 반복문으로 각 케이스를 실행한다.
 //
-// httptest.NewRequest()는 Go 표준 라이브러리의 테스트용 HTTP 요청 생성 함수다.
-// 실제 네트워크를 거치지 않고 Fiber 앱에 직접 요청을 주입한다.
-// NestJS에서 supertest의 request(app.getHttpServer()).get('/livez')와 같다.
-func (s *HealthE2ESuite) TestLivez() {
-	// HTTP GET /livez 요청을 생성한다.
-	// httptest.NewRequest는 (메서드, URL, 바디)를 받는다.
-	// 바디가 없으므로 nil을 전달한다.
-	req := httptest.NewRequest(http.MethodGet, "/livez", nil)
-
-	// app.Test()는 Fiber의 테스트 헬퍼로, 실제 서버를 띄우지 않고
-	// 내부적으로 요청을 처리하여 응답을 반환한다.
-	// NestJS의 supertest가 내부적으로 서버를 띄우고 요청을 보내는 것과 달리,
-	// Fiber의 Test()는 네트워크 레이어를 완전히 건너뛰어 더 빠르다.
-	resp, err := s.app.Test(req)
-	s.Require().NoError(err)
-	defer resp.Body.Close()
-	s.Equal(http.StatusOK, resp.StatusCode)
-}
-
-// TestReadyz는 Readiness Probe 엔드포인트를 검증한다.
+// NestJS/Jest의 it.each()와 같은 개념이다:
 //
-// GET /readyz는 애플리케이션이 트래픽을 받을 준비가 되었는지 확인한다.
-// 내부적으로 DB에 Ping을 보내 연결 상태를 확인한다.
-// in-memory SQLite가 정상이면 200 OK를 반환한다.
-func (s *HealthE2ESuite) TestReadyz() {
-	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+//	it.each([
+//	  ['/livez', 200],
+//	  ['/readyz', 200],
+//	])('GET %s should return %d', (path, status) => { ... });
+//
+// 장점:
+//   - 새 엔드포인트 추가 시 구조체만 추가하면 된다 (테스트 로직 변경 불필요)
+//   - 각 케이스가 t.Run()의 서브테스트로 실행되어 개별 실패 추적이 가능하다
+//   - go test -run TestHealthE2E/TestHealthEndpoints/livez 로 특정 케이스만 실행 가능
+func (s *HealthE2ESuite) TestHealthEndpoints() {
+	tests := []struct {
+		name       string // 서브테스트 이름 — 실패 시 어떤 엔드포인트인지 식별
+		method     string // HTTP 메서드 (GET, POST 등)
+		path       string // 요청 경로
+		wantStatus int    // 기대하는 HTTP 상태 코드
+	}{
+		// /livez — Liveness Probe
+		// 프로세스가 살아있는지 확인하는 쿠버네티스 표준 엔드포인트다.
+		// 외부 의존성(DB 등) 장애와 무관하게 항상 200 OK를 반환해야 한다.
+		{
+			name:       "livez",
+			method:     http.MethodGet,
+			path:       "/livez",
+			wantStatus: http.StatusOK,
+		},
+		// /readyz — Readiness Probe
+		// 애플리케이션이 트래픽을 받을 준비가 되었는지 확인한다.
+		// 내부적으로 DB에 Ping을 보내 연결 상태를 확인한다.
+		{
+			name:       "readyz",
+			method:     http.MethodGet,
+			path:       "/readyz",
+			wantStatus: http.StatusOK,
+		},
+	}
 
-	resp, err := s.app.Test(req)
-	s.Require().NoError(err)
-	defer resp.Body.Close()
-	s.Equal(http.StatusOK, resp.StatusCode)
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			// httptest.NewRequest()는 Go 표준 라이브러리의 테스트용 HTTP 요청 생성 함수다.
+			// 실제 네트워크를 거치지 않고 Fiber 앱에 직접 요청을 주입한다.
+			// NestJS에서 supertest의 request(app.getHttpServer()).get(path)와 같다.
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+
+			// app.Test()는 Fiber의 테스트 헬퍼로, 실제 서버를 띄우지 않고
+			// 내부적으로 요청을 처리하여 응답을 반환한다.
+			resp, err := s.app.Test(req)
+			s.Require().NoError(err)
+			defer resp.Body.Close()
+
+			s.Equal(tt.wantStatus, resp.StatusCode)
+		})
+	}
 }
 
 // TestHealthE2E는 Go 테스트 러너의 진입점이다.
