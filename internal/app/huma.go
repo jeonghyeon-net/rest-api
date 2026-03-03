@@ -23,6 +23,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/gofiber/fiber/v3"
+	"go.uber.org/zap"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -236,6 +237,7 @@ type fiberTester interface {
 type fiberAdapter struct {
 	router fiberRouter // 라우트 등록용 (앱 또는 그룹)
 	tester fiberTester // HTTP 테스트용 (항상 앱)
+	logger *zap.Logger // ServeHTTP에서 바디 복사 에러를 기록하는 로거
 }
 
 // Handle은 huma 오퍼레이션을 Fiber 라우트로 등록한다.
@@ -289,8 +291,12 @@ func (a *fiberAdapter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(resp.StatusCode)
-	//nolint:errcheck // 이미 WriteHeader를 호출했으므로 응답 바디 쓰기 에러를 처리할 수 없다
-	_, _ = io.Copy(w, resp.Body)
+
+	// WriteHeader를 이미 호출했으므로 상태 코드를 변경할 수는 없지만,
+	// 에러를 조용히 무시하지 않고 로거에 기록하여 운영 시 추적이 가능하게 한다.
+	if _, err = io.Copy(w, resp.Body); err != nil {
+		a.logger.Warn("응답 바디 복사 실패", zap.Error(err))
+	}
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -301,8 +307,8 @@ func (a *fiberAdapter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // 모든 huma 오퍼레이션이 이 API 인스턴스에 등록된다.
 //
 // NestJS에서 SwaggerModule.setup()으로 Swagger를 앱에 마운트하는 것과 같다.
-func NewHumaAPI(app *fiber.App, cfg huma.Config) huma.API {
-	return huma.NewAPI(cfg, &fiberAdapter{router: app, tester: app})
+func NewHumaAPI(app *fiber.App, cfg huma.Config, logger *zap.Logger) huma.API {
+	return huma.NewAPI(cfg, &fiberAdapter{router: app, tester: app, logger: logger})
 }
 
 // UnwrapFiberCtx는 huma.Context에서 원본 Fiber 컨텍스트를 추출한다.

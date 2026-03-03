@@ -1,3 +1,5 @@
+//go:build unit
+
 package db
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -75,7 +77,7 @@ func TestOpenDB(t *testing.T) {
 	//
 	// require.NoError는 err가 nil이 아니면 즉시 테스트를 중단한다.
 	// DB를 열지 못하면 이후의 PRAGMA 검증이 의미 없으므로 require를 사용한다.
-	db, err := openDB(context.Background(), path)
+	db, err := openDB(context.Background(), path, nil)
 	require.NoError(t, err, "openDB 실패")
 
 	// t.Cleanup()은 테스트가 끝난 후 자동으로 실행되는 정리 함수를 등록한다.
@@ -155,7 +157,7 @@ func TestOpenDB_CreatesDirectory(t *testing.T) {
 	// "nested/deep/" 디렉터리는 아직 없으므로, openDB가 자동 생성해야 한다.
 	path := filepath.Join(t.TempDir(), "nested", "deep", "test.db")
 
-	db, err := openDB(context.Background(), path)
+	db, err := openDB(context.Background(), path, nil)
 	require.NoError(t, err, "openDB 실패 (중첩 디렉터리)")
 
 	t.Cleanup(func() { _ = db.Close() })

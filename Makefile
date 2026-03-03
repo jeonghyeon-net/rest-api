@@ -8,7 +8,7 @@
 # .PHONY는 Make에게 "이 이름들은 파일이 아니라 명령어 이름"이라고 알려준다.
 # 만약 프로젝트에 build라는 이름의 파일이 있으면, Make는 이미 최신이라고 판단하여
 # 명령을 실행하지 않는다. .PHONY로 선언하면 항상 실행된다.
-.PHONY: build run dev clean test e2e test-all arch setup docker fmt lint sqlc-gen migrate-new migrate-up migrate-down migrate-status
+.PHONY: build run dev clean test e2e test-all cover cover-check arch setup docker fmt lint sqlc-gen migrate-new migrate-up migrate-down migrate-status
 
 # .env 파일이 있으면 환경변수로 로드한다.
 # 앞에 - 를 붙이면 파일이 없어도 에러가 발생하지 않는다.
@@ -69,14 +69,14 @@ lint:
 	golangci-lint run
 	nilaway -exclude-errors-in-files="test/architecture" ./...
 
-# 아키텍처 테스트를 제외한 모든 유닛 테스트를 실행한다.
-# ./... 패턴은 현재 모듈의 모든 패키지를 의미한다.
+# 유닛 테스트만 실행한다. (//go:build unit 태그가 붙은 테스트 파일)
+# -tags=unit으로 유닛 테스트 파일만 컴파일한다.
 # -count=1은 테스트 캐시를 무시하고 항상 새로 실행하게 한다.
 # grep -v로 test/architecture 패키지를 제외한다 (아키텍처 검증은 make arch로 별도 실행).
 # "[no test files]" 줄은 출력에서 제거한다 (테스트 파일이 없는 패키지 노이즈 제거).
 # NestJS의 npm run test (jest)와 같은 역할이다.
 test:
-	go test $$(go list ./... | grep -v test/architecture) -count=1 2>&1 | grep -v '\[no test'
+	go test -tags=unit $$(go list ./... | grep -v test/architecture) -count=1 2>&1 | grep -v '\[no test'
 
 # E2E(통합) 테스트를 실행한다.
 # -tags=e2e 빌드 태그가 있는 테스트 파일만 컴파일하여 실행한다.
@@ -87,13 +87,37 @@ test:
 e2e:
 	go test -tags=e2e $$(go list ./... | grep -v test/architecture) -count=1 2>&1 | grep -v '\[no test'
 
+# 테스트 커버리지 리포트를 생성하고 브라우저에서 연다.
+# -tags=unit,e2e로 유닛+E2E 테스트를 한번에 실행하면서 커버리지를 측정한다.
+# -coverpkg로 internal/domain 패키지만 측정 대상으로 지정한다.
+# NestJS의 jest --coverage와 같은 역할이다.
+cover:
+	go test -tags=unit,e2e $$(go list ./... | grep -v test/architecture) -count=1 -coverpkg=$$(go list ./internal/domain/... | tr '\n' ',') -coverprofile=coverage.out 2>&1 | grep -v '\[no test'
+	go tool cover -html=coverage.out -o coverage.html
+	open coverage.html
+
+# 테스트 커버리지가 100%인지 검증한다. (CI/훅용, 리포트 파일 생성 안 함)
+# -tags=unit,e2e로 유닛+E2E를 한번에 실행하여 커버리지를 측정한다.
+# 전체 커버리지가 100.0%가 아니면 exit 1로 실패 처리한다.
+# pre-push 훅에서 호출되어 커버리지 미달 시 push를 차단한다.
+cover-check:
+	@go test -tags=unit,e2e $$(go list ./... | grep -v test/architecture) -count=1 -coverpkg=$$(go list ./internal/domain/... | tr '\n' ',') -coverprofile=coverage.out 2>&1 | grep -v '\[no test'
+	@TOTAL=$$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $$NF}'); \
+	echo "전체 커버리지: $$TOTAL"; \
+	if [ "$$TOTAL" != "100.0%" ]; then \
+		echo ""; \
+		echo "커버리지 미달 패키지:"; \
+		go tool cover -func=coverage.out | grep -v '100.0%' | grep -v '^total:'; \
+		exit 1; \
+	fi
+
 # 유닛 테스트 + E2E 테스트 + 아키텍처 테스트를 모두 실행한다.
+# -tags=unit,e2e로 유닛과 E2E를 한번에 실행하므로 중복 없이 전체 테스트를 커버한다.
 # CI 파이프라인에서 사용하거나, push 전 전체 검증에 사용한다.
 # $(MAKE)는 재귀적 make 호출로, 각 타겟을 순서대로 실행한다.
 # NestJS의 npm run test:all과 같은 역할이다.
 test-all:
-	$(MAKE) test
-	$(MAKE) e2e
+	go test -tags=unit,e2e $$(go list ./... | grep -v test/architecture) -count=1 2>&1 | grep -v '\[no test'
 	$(MAKE) arch
 
 # 아키텍처 규칙 준수 여부를 자동 검증한다.

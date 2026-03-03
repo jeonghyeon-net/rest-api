@@ -161,8 +161,8 @@ func newHumaConfig() huma.Config {
 //
 // 반환 타입이 huma.API(인터페이스)인 점에 주의.
 // 외부에서 구현 세부사항(fiberAdapter)에 의존하지 않게 된다.
-func newHumaAPI(app *fiber.App) huma.API {
-	return NewHumaAPI(app, newHumaConfig())
+func newHumaAPI(app *fiber.App, logger *zap.Logger) huma.API {
+	return NewHumaAPI(app, newHumaConfig(), logger)
 }
 
 // setupMiddleware는 보안 및 유틸리티 미들웨어를 등록한다.

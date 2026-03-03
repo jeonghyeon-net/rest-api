@@ -46,6 +46,9 @@ import (
 //
 // 매개변수:
 //   - path: SQLite DB 파일 경로. 예: "./data/app.db"
+//   - logger: SQL 쿼리 로깅용 로거. nil이면 로깅 없이 일반 드라이버를 사용한다.
+//     개발 환경에서는 NewDB()가 zap.Logger를 전달하여 쿼리 로깅을 활성화하고,
+//     프로덕션에서는 nil을 전달하여 로깅 없이 동작한다.
 //
 // 반환값:
 //   - *sql.DB: Go 표준 라이브러리의 DB 연결 풀(connection pool) 객체.
@@ -57,7 +60,7 @@ import (
 // 0o750 = rwxr-x--- (소유자: 읽기+쓰기+실행, 그룹: 읽기+실행, 기타: 접근 불가)
 const dirPerm = 0o750
 
-func openDB(ctx context.Context, path string) (*sql.DB, error) {
+func openDB(ctx context.Context, path string, logger *zap.Logger) (*sql.DB, error) {
 	// ─────────────────────────────────────────────────────────────────────
 	// 1. DB 파일의 상위 디렉터리를 자동 생성
 	// ─────────────────────────────────────────────────────────────────────
@@ -98,11 +101,26 @@ func openDB(ctx context.Context, path string) (*sql.DB, error) {
 	// 연결 풀(pool)을 초기화하고, 실제 쿼리 시점에 연결을 생성한다.
 	// NestJS에서 TypeORM의 createConnection()이 pool을 설정하는 것과 같다.
 	//
-	// 첫 번째 인자 "sqlite"는 드라이버 이름이다.
-	// 위에서 _ "modernc.org/sqlite"로 등록한 드라이버의 이름과 일치해야 한다.
-	db, err := sql.Open("sqlite", cleanPath)
-	if err != nil {
-		return nil, fmt.Errorf("DB 열기 실패 (%s): %w", cleanPath, err)
+	// ─── DB 연결 열기: 로깅 여부에 따라 분기 ──────────────────────────
+	//
+	// logger가 nil이 아니면(개발 환경), newLoggedDB()로 쿼리 로깅이 활성화된 DB를 연다.
+	// newLoggedDB()는 sql.OpenDB()에 logConnector를 전달하여, 드라이버 등록 없이
+	// 모든 쿼리를 로깅하는 래퍼를 구성한다. (logdriver.go 참조)
+	//
+	// logger가 nil이면(프로덕션), 기존 sql.Open("sqlite", ...)을 그대로 사용한다.
+	var db *sql.DB
+	if logger != nil {
+		var err error
+		db, err = newLoggedDB(cleanPath, logger)
+		if err != nil {
+			return nil, fmt.Errorf("DB 열기 실패 (%s): %w", cleanPath, err)
+		}
+	} else {
+		var err error
+		db, err = sql.Open("sqlite", cleanPath)
+		if err != nil {
+			return nil, fmt.Errorf("DB 열기 실패 (%s): %w", cleanPath, err)
+		}
 	}
 
 	// ─────────────────────────────────────────────────────────────────────
@@ -189,13 +207,27 @@ func NewDB(lc fx.Lifecycle, logger *zap.Logger, cfg *config.Config) (*sql.DB, er
 	dbPath := cfg.DBPath
 	logger.Info("SQLite 데이터베이스 연결 시작", zap.String("path", dbPath))
 
+	// ─── 개발 환경 SQL 쿼리 로깅 설정 ────────────────────────────────────
+	//
+	// 프로덕션이 아닌 환경(development, test 등)에서는 로거를 openDB에 전달하여
+	// 쿼리 로깅을 활성화한다. openDB는 내부적으로 newLoggedDB()를 호출하여
+	// sql.OpenDB(logConnector)로 래핑된 DB를 생성한다.
+	// 프로덕션에서는 nil을 전달하여 일반 sql.Open("sqlite", ...)을 사용한다.
+	//
+	// NestJS에서 TypeORM의 logging: process.env.NODE_ENV !== 'production' 설정과 같다.
+	var queryLog *zap.Logger
+	if cfg.AppEnv != "production" {
+		queryLog = logger
+		logger.Info("SQL 쿼리 로깅 활성화")
+	}
+
 	// openDB를 호출하여 DB 연결을 생성한다.
 	// 이 함수는 위에서 정의한 비공개(unexported) 함수다.
 	// PRAGMA 설정까지 모두 완료된 *sql.DB를 반환한다.
 	// context.Background()를 사용하는 이유:
 	// openDB는 앱 초기화 시 1회 호출되며, 요청 스코프(request-scoped) context가 아니다.
 	// fx.Lifecycle의 OnStart에서 호출되므로 fx의 StartTimeout이 타임아웃을 관리한다.
-	db, err := openDB(context.Background(), dbPath)
+	db, err := openDB(context.Background(), dbPath, queryLog)
 	if err != nil {
 		return nil, fmt.Errorf("DB 연결 실패: %w", err)
 	}

@@ -5,3 +5,5 @@ rest-api
 .vscode/
 data/
 docs/
+coverage.out
+coverage.html

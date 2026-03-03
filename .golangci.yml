@@ -304,7 +304,6 @@ linters:
     # 예: //nolint:errcheck // 이 에러는 의도적으로 무시한다
     - nolintlint
 
-
   settings:
     # --- 기존 린터 설정 ---
 
@@ -587,6 +586,6 @@ formatters:
       #       "rest-api/..."      // 3그룹: 프로젝트 내부 패키지
       #   )
       sections:
-        - standard                    # Go 표준 라이브러리 (fmt, net/http, context 등)
-        - default                     # 외부 의존성 (github.com/*, go.uber.org/* 등)
-        - prefix(rest-api)            # 프로젝트 내부 패키지
+        - standard # Go 표준 라이브러리 (fmt, net/http, context 등)
+        - default # 외부 의존성 (github.com/*, go.uber.org/* 등)
+        - prefix(rest-api) # 프로젝트 내부 패키지
