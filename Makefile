@@ -73,17 +73,19 @@ lint:
 # ./... 패턴은 현재 모듈의 모든 패키지를 의미한다.
 # -count=1은 테스트 캐시를 무시하고 항상 새로 실행하게 한다.
 # grep -v로 test/architecture 패키지를 제외한다 (아키텍처 검증은 make arch로 별도 실행).
+# "[no test files]" 줄은 출력에서 제거한다 (테스트 파일이 없는 패키지 노이즈 제거).
 # NestJS의 npm run test (jest)와 같은 역할이다.
 test:
-	go test $$(go list ./... | grep -v test/architecture) -count=1
+	go test $$(go list ./... | grep -v test/architecture) -count=1 2>&1 | grep -v '\[no test'
 
 # E2E(통합) 테스트를 실행한다.
 # -tags=e2e 빌드 태그가 있는 테스트 파일만 컴파일하여 실행한다.
 # 아키텍처 테스트는 제외한다 (make arch로 별도 실행).
+# "[no test files]" 줄은 출력에서 제거한다 (테스트 파일이 없는 패키지 노이즈 제거).
 # in-memory SQLite를 사용하므로 외부 인프라 없이 실행 가능하다.
 # NestJS의 npm run test:e2e와 같은 역할이다.
 e2e:
-	go test -tags=e2e $$(go list ./... | grep -v test/architecture) -count=1
+	go test -tags=e2e $$(go list ./... | grep -v test/architecture) -count=1 2>&1 | grep -v '\[no test'
 
 # 유닛 테스트 + E2E 테스트 + 아키텍처 테스트를 모두 실행한다.
 # CI 파이프라인에서 사용하거나, push 전 전체 검증에 사용한다.
