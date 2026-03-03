@@ -146,8 +146,12 @@ func newHumaConfig() huma.Config {
 	// /openapi.json, /openapi.yaml 경로가 자동 생성된다.
 	config.OpenAPIPath = "/openapi"
 
-	// JSON Schema 경로
-	config.SchemasPath = "/schemas"
+	// $schema 필드를 응답에서 제거한다.
+	// huma의 DefaultConfig는 CreateHooks에 SchemaLinkTransformer를 등록하여
+	// 모든 JSON 응답과 OpenAPI 스키마에 $schema 필드를 자동 추가한다.
+	// REST API 클라이언트에게는 불필요한 필드이므로 훅을 제거한다.
+	config.CreateHooks = nil
+	config.SchemasPath = ""
 
 	return config
 }
