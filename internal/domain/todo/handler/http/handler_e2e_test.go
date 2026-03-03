@@ -89,6 +89,19 @@ func (s *TodoE2ESuite) SetupSuite() {
 	)
 }
 
+// SetupTest는 각 테스트 메서드 실행 전에 호출된다.
+// NestJS의 beforeEach()와 같은 역할이다.
+//
+// 모든 테이블 데이터를 삭제하여 각 테스트가 빈 DB에서 시작하도록 한다.
+// 이렇게 하면 테스트 간 데이터 누적이 없어서 정확한 값으로 검증할 수 있다.
+// (예: GreaterOrEqual 대신 Equal 사용 가능)
+//
+// 시딩은 하지 않는다 — 각 테스트가 필요한 데이터를 API 호출로 직접 생성한다.
+// 이 방식이 테스트 의도가 명확하고 유지보수가 쉽다.
+func (s *TodoE2ESuite) SetupTest() {
+	testutil.TruncateAll(s.T(), s.db)
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // 헬퍼 메서드
 // ──────────────────────────────────────────────────────────────────────────────
@@ -219,7 +232,8 @@ func (s *TodoE2ESuite) TestTagCRUD() {
 	s.Equal(http.StatusOK, resp.StatusCode)
 
 	tags := decodeJSON[[]tagmodel.Tag](s, resp)
-	s.GreaterOrEqual(len(tags), 2)
+	// SetupTest에서 DB를 초기화하므로 이 테스트에서 생성한 2개만 존재한다.
+	s.Len(tags, 2)
 
 	// ─── 3. 수정 (PATCH /tags/:id) ─────────────────────────────────────
 	resp = s.doRequest(http.MethodPatch, fmt.Sprintf("/tags/%d", created.ID), s.jsonBody(map[string]string{
@@ -321,8 +335,8 @@ func (s *TodoE2ESuite) TestPagination() {
 	s.Len(list.Data, 2)
 	s.Equal(2, list.Meta.Limit)
 	s.Equal(1, list.Meta.Page)
-	// 이 스위트의 다른 테스트에서도 할 일을 생성하므로 total >= 5 검증
-	s.GreaterOrEqual(list.Meta.Total, int64(5))
+	// SetupTest에서 DB를 초기화하므로 이 테스트에서 생성한 5개만 존재한다.
+	s.Equal(int64(5), list.Meta.Total)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -363,8 +377,8 @@ func (s *TodoE2ESuite) TestTagFilter() {
 	s.Equal(http.StatusOK, resp.StatusCode)
 
 	list := decodeJSON[model.TodoList](s, resp)
-	// 필터된 결과에는 필터태그가 연결된 할 일만 포함
-	s.GreaterOrEqual(len(list.Data), 1)
+	// SetupTest에서 DB를 초기화하므로 필터태그가 연결된 할 일은 정확히 1개다.
+	s.Len(list.Data, 1)
 
 	for _, item := range list.Data {
 		found := false

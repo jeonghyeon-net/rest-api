@@ -193,3 +193,70 @@ func NewTestApp(t *testing.T, opts ...fx.Option) (*fiber.App, *sql.DB) {
 
 	return fiberApp, memDB
 }
+
+// TruncateAll은 E2E 테스트 간 데이터 격리를 위해 모든 테이블의 데이터를 삭제한다.
+//
+// 각 테스트가 깨끗한 상태에서 시작하도록 SetupTest(beforeEach)에서 호출한다.
+// NestJS에서 beforeEach(() => connection.synchronize(true))로 DB를 초기화하는 것과 같다.
+//
+// 도메인별 테이블명을 하드코딩하지 않고, sqlite_master에서 모든 사용자 테이블을
+// 동적으로 조회하여 삭제한다. 새 도메인이 추가되어도 이 함수를 수정할 필요가 없다.
+//
+// FK 제약 조건을 임시로 비활성화하여 테이블 삭제 순서를 신경 쓰지 않아도 된다.
+// PRAGMA foreign_keys는 트랜잭션 내에서 변경할 수 없으므로(SQLite 제약),
+// 트랜잭션 밖에서 OFF → DELETE → ON 순서로 실행한다.
+//
+// MySQL 전환 시에는 아래와 같이 변경하면 된다:
+//
+//	db.Exec("SET FOREIGN_KEY_CHECKS=0")
+//	// information_schema.tables에서 테이블 목록 조회
+//	db.Exec("TRUNCATE TABLE " + table)  // DELETE 대신 TRUNCATE (AUTO_INCREMENT 자동 리셋)
+//	db.Exec("SET FOREIGN_KEY_CHECKS=1")
+func TruncateAll(t *testing.T, database *sql.DB) {
+	t.Helper()
+
+	// FK 제약을 임시로 비활성화한다.
+	// 이렇게 하면 자식 테이블보다 부모 테이블을 먼저 삭제해도 에러가 나지 않는다.
+	// MySQL의 SET FOREIGN_KEY_CHECKS=0과 같은 역할이다.
+	_, err := database.Exec("PRAGMA foreign_keys=OFF")
+	require.NoError(t, err, "FK 비활성화 실패")
+
+	// sqlite_master에서 모든 사용자 테이블을 동적으로 조회한다.
+	// sqlite_master는 SQLite의 시스템 카탈로그로, 테이블/인덱스/뷰 등의 메타데이터를 저장한다.
+	// MySQL의 information_schema.tables와 같은 역할이다.
+	//
+	// 제외 대상:
+	//   - sqlite_% : SQLite 내부 테이블 (sqlite_sequence 등)
+	//   - goose_%  : goose 마이그레이션 관리 테이블 (goose_db_version)
+	rows, err := database.Query(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'goose_%'",
+	)
+	require.NoError(t, err, "테이블 목록 조회 실패")
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var name string
+		require.NoError(t, rows.Scan(&name), "테이블명 스캔 실패")
+		tables = append(tables, name)
+	}
+	require.NoError(t, rows.Err(), "테이블 목록 순회 실패")
+
+	// 모든 사용자 테이블의 데이터를 삭제한다.
+	for _, table := range tables {
+		_, err := database.Exec("DELETE FROM " + table)
+		require.NoError(t, err, "%s 테이블 초기화 실패", table)
+	}
+
+	// AUTOINCREMENT 시퀀스를 리셋한다.
+	// sqlite_sequence 테이블은 SQLite가 내부적으로 관리하며,
+	// AUTOINCREMENT가 사용된 각 테이블의 마지막 할당 ID를 기록한다.
+	// 이 값을 삭제하면 다음 INSERT 시 ID가 1부터 다시 시작된다.
+	// MySQL에서는 TRUNCATE TABLE이 AUTO_INCREMENT를 자동으로 리셋하므로 이 단계가 불필요하다.
+	_, err = database.Exec("DELETE FROM sqlite_sequence")
+	require.NoError(t, err, "sqlite_sequence 초기화 실패")
+
+	// FK 제약을 다시 활성화한다.
+	_, err = database.Exec("PRAGMA foreign_keys=ON")
+	require.NoError(t, err, "FK 재활성화 실패")
+}
