@@ -45,6 +45,9 @@ import (
 	"rest-api/test/architecture/report"
 )
 
+// layerRoot는 도메인 루트(alias.go가 있는 곳)를 나타내는 레이어 이름이다.
+const layerRoot = "root"
+
 // CheckDependencies는 모든 파일의 import문을 검사해서 의존성 규칙 위반을 찾는다.
 //
 // 동작 방식:
@@ -54,9 +57,12 @@ import (
 func CheckDependencies(files []*analyzer.FileInfo, cfg *Config) []report.Violation {
 	var violations []report.Violation
 
-	for _, f := range files {
+	for _, file := range files {
 		// 파일의 절대 경로를 프로젝트 루트 기준 상대 경로로 변환
-		relPath, _ := filepath.Rel(cfg.ProjectRoot, f.Path)
+		relPath, err := filepath.Rel(cfg.ProjectRoot, file.Path)
+		if err != nil {
+			continue
+		}
 
 		// 파일 경로에서 도메인/Saga 구조 정보를 추출한다
 		src := analyzer.ParseDomainPath(relPath)
@@ -65,7 +71,7 @@ func CheckDependencies(files []*analyzer.FileInfo, cfg *Config) []report.Violati
 		}
 
 		// 이 파일의 모든 import문을 검사
-		for _, imp := range f.Imports {
+		for _, imp := range file.Imports {
 			// import 경로에서 도메인/Saga 구조 정보를 추출
 			target := analyzer.ImportToDomainPath(imp.Path, cfg.ModuleName)
 			if target == nil {
@@ -73,26 +79,26 @@ func CheckDependencies(files []*analyzer.FileInfo, cfg *Config) []report.Violati
 			}
 
 			// ── Saga 관련 규칙 ──
-			if v := checkSagaDependency(src, target, f.Path, imp); v != nil {
+			if v := checkSagaDependency(src, target, file.Path, imp); v != nil {
 				violations = append(violations, *v)
 				continue // Saga 규칙에 걸렸으면 도메인 규칙은 검사하지 않음
 			}
-			if v := checkSubdomainImportsSaga(src, target, f.Path, imp); v != nil {
+			if v := checkSubdomainImportsSaga(src, target, file.Path, imp); v != nil {
 				violations = append(violations, *v)
 				continue
 			}
 
 			// ── 도메인 관련 규칙 (기존) ──
-			if v := checkCrossSubdomain(src, target, f.Path, imp); v != nil {
+			if v := checkCrossSubdomain(src, target, file.Path, imp); v != nil {
 				violations = append(violations, *v)
 			}
-			if v := checkSubdomainImportsDomainLayer(src, target, f.Path, imp); v != nil {
+			if v := checkSubdomainImportsDomainLayer(src, target, file.Path, imp); v != nil {
 				violations = append(violations, *v)
 			}
-			if v := checkCrossDomain(src, target, f.Path, imp); v != nil {
+			if v := checkCrossDomain(src, target, file.Path, imp); v != nil {
 				violations = append(violations, *v)
 			}
-			if v := checkLayerDirection(src, target, f.Path, imp); v != nil {
+			if v := checkLayerDirection(src, target, file.Path, imp); v != nil {
 				violations = append(violations, *v)
 			}
 		}
@@ -148,7 +154,7 @@ func checkSagaDependency(src, target *analyzer.DomainPath, file string, imp anal
 	// 오직 도메인 root(alias.go)만 허용. svc/ 직접 접근도 금지.
 	// alias.go가 유일한 진입점이다.
 	if target.Domain != "" {
-		if target.Layer == "root" {
+		if target.Layer == layerRoot {
 			return nil // 허용: alias.go를 통한 접근
 		}
 
@@ -280,7 +286,7 @@ func checkSubdomainImportsDomainLayer(src, target *analyzer.DomainPath, file str
 		return nil
 	}
 	// domain root (alias.go)는 허용 — 블로그 매트릭스에서 "Public: ✓"
-	if target.Layer == "root" {
+	if target.Layer == layerRoot {
 		return nil
 	}
 
@@ -322,7 +328,7 @@ func checkCrossDomain(src, target *analyzer.DomainPath, file string, imp analyze
 		return nil
 	}
 	// 도메인 루트(alias.go가 있는 곳)만 허용
-	if target.Layer == "root" {
+	if target.Layer == layerRoot {
 		return nil
 	}
 

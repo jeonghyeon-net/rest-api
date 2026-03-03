@@ -6,6 +6,7 @@ package report
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -30,11 +31,11 @@ const (
 //	  fix: use Public Service or move logic to core/
 type Violation struct {
 	Rule     string   // 위반한 규칙의 이름 (예: "dependency/cross-subdomain")
-	Severity Severity // 심각도: Error 또는 Warning
 	Message  string   // 위반 내용을 설명하는 메시지
 	File     string   // 위반이 발생한 파일 경로
-	Line     int      // 위반이 발생한 줄 번호 (0이면 줄 번호 없음)
 	Fix      string   // 어떻게 고치면 되는지 안내하는 메시지
+	Severity Severity // 심각도: Error 또는 Warning
+	Line     int      // 위반이 발생한 줄 번호 (0이면 줄 번호 없음)
 }
 
 // String은 Violation을 사람이 읽기 좋은 문자열로 변환한다.
@@ -43,19 +44,19 @@ type Violation struct {
 func (v Violation) String() string {
 	// fmt.Sprintf는 포맷 문자열을 사용해서 문자열을 만드는 함수다.
 	// %s = 문자열 삽입, %d = 정수 삽입
-	s := fmt.Sprintf("[%s] %s: %s\n  file: %s", v.Severity, v.Rule, v.Message, v.File)
+	result := fmt.Sprintf("[%s] %s: %s\n  file: %s", v.Severity, v.Rule, v.Message, v.File)
 
 	// 줄 번호가 있으면 파일 경로 뒤에 :줄번호 형태로 붙인다.
 	if v.Line > 0 {
-		s += fmt.Sprintf(":%d", v.Line)
+		result += ":" + strconv.Itoa(v.Line)
 	}
 
 	// 수정 안내가 있으면 추가한다.
 	if v.Fix != "" {
-		s += fmt.Sprintf("\n  fix: %s", v.Fix)
+		result += "\n  fix: " + v.Fix
 	}
 
-	return s
+	return result
 }
 
 // Summary는 모든 위반 사항을 종합해서 요약 리포트 문자열을 만든다.
@@ -82,22 +83,22 @@ func Summary(violations []Violation) string {
 	// strings.Builder는 문자열을 효율적으로 이어붙이기 위한 도구다.
 	// + 연산자로 문자열을 반복해서 이어붙이면 매번 새 문자열이 생성되어 느리다.
 	// Builder를 쓰면 내부 버퍼에 쌓아두고 한 번에 문자열로 변환하므로 빠르다.
-	var b strings.Builder
-	fmt.Fprintf(&b, "Architecture violations: %d error(s), %d warning(s)\n\n", errors, warnings)
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "Architecture violations: %d error(s), %d warning(s)\n\n", errors, warnings)
 
 	// 규칙별 위반 횟수 출력
 	for rule, count := range byRule {
-		fmt.Fprintf(&b, "  %s: %d violation(s)\n", rule, count)
+		fmt.Fprintf(&builder, "  %s: %d violation(s)\n", rule, count)
 	}
-	fmt.Fprintln(&b) // 빈 줄 추가
+	fmt.Fprintln(&builder) // 빈 줄 추가
 
 	// 각 위반의 상세 내용 출력
 	for _, v := range violations {
-		fmt.Fprintln(&b, v.String())
-		fmt.Fprintln(&b) // 위반 사이에 빈 줄 추가
+		fmt.Fprintln(&builder, v.String())
+		fmt.Fprintln(&builder) // 위반 사이에 빈 줄 추가
 	}
 
-	return b.String()
+	return builder.String()
 }
 
 // HasErrors는 위반 목록에 Error 심각도가 하나라도 있으면 true를 반환한다.

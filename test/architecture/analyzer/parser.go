@@ -12,6 +12,7 @@
 package analyzer
 
 import (
+	"fmt"           // 포맷팅된 문자열 생성
 	"go/ast"        // Go AST 노드 타입들이 정의된 패키지
 	"go/parser"     // Go 소스코드를 AST로 파싱하는 패키지
 	"go/token"      // 소스코드 내 위치(줄번호 등)를 추적하는 패키지
@@ -68,10 +69,10 @@ type TypeInfo struct {
 //   - 메서드: func (u *User) DoSomething() { ... }  ← Receiver가 "*User"
 type FuncInfo struct {
 	Name        string   // 함수/메서드 이름 (예: "New", "GetUser")
-	IsExported  bool     // 대문자로 시작하면 true
 	Receiver    string   // 메서드의 리시버 타입 (함수면 빈 문자열). 예: "*user", "user"
 	ReturnTypes []string // 반환 타입 목록. 예: ["User", "error"]
 	Line        int      // 소스코드에서의 줄 번호
+	IsExported  bool     // 대문자로 시작하면 true
 }
 
 // ──────────────────────────────────────────────
@@ -92,21 +93,23 @@ func ParseFile(path string) (*FileInfo, error) {
 	// parser.ParseFile: Go 파일을 읽어서 AST로 변환한다.
 	// 반환값 f는 *ast.File 타입으로, 파일 전체의 AST 트리 루트 노드다.
 	// 마지막 인자 0은 파싱 옵션인데, 0이면 기본 동작(주석은 무시)한다.
-	f, err := parser.ParseFile(fset, path, nil, 0)
+	// astFile은 파싱된 Go 파일의 AST 루트 노드다.
+	// 변수명을 astFile로 지어서 ast.File 타입임을 명확히 한다.
+	astFile, err := parser.ParseFile(fset, path, nil, 0)
 	if err != nil {
-		return nil, err // 파싱 실패시 에러 반환
+		return nil, fmt.Errorf("파일 파싱 실패 %s: %w", path, err) // 파싱 실패시 에러 반환
 	}
 
 	// 결과를 담을 FileInfo 구조체 생성
-	// f.Name.Name은 파일 최상단의 "package xxx" 에서 xxx 부분이다.
+	// astFile.Name.Name은 파일 최상단의 "package xxx" 에서 xxx 부분이다.
 	info := &FileInfo{
 		Path:    path,
-		Package: f.Name.Name,
+		Package: astFile.Name.Name,
 	}
 
 	// ── import 문 추출 ──
-	// f.Imports는 이 파일의 모든 import 문 슬라이스다.
-	for _, imp := range f.Imports {
+	// astFile.Imports는 이 파일의 모든 import 문 슬라이스다.
+	for _, imp := range astFile.Imports {
 		ii := ImportInfo{
 			// imp.Path.Value는 큰따옴표가 포함된 문자열이다. 예: "\"fmt\""
 			// strings.Trim으로 양쪽의 큰따옴표를 제거한다.
@@ -123,20 +126,19 @@ func ParseFile(path string) (*FileInfo, error) {
 	}
 
 	// ── 타입 선언과 함수 선언 추출 ──
-	// f.Decls는 파일의 모든 최상위 선언(declaration) 목록이다.
+	// astFile.Decls는 파일의 모든 최상위 선언(declaration) 목록이다.
 	// Go에서 최상위 선언은 크게 두 종류:
 	//   1. GenDecl: type, var, const 등의 일반 선언
 	//   2. FuncDecl: func 선언 (함수 또는 메서드)
-	for _, decl := range f.Decls {
-		// switch d := decl.(type)는 "타입 스위치"라고 한다.
+	for _, decl := range astFile.Decls {
+		// switch declNode := decl.(type)는 "타입 스위치"라고 한다.
 		// decl의 실제 타입이 무엇인지에 따라 분기한다.
-		switch d := decl.(type) {
-
+		switch declNode := decl.(type) {
 		// GenDecl: type, var, const 등의 일반 선언
 		case *ast.GenDecl:
 			// GenDecl 안에는 여러 개의 Spec(사양)이 들어있을 수 있다.
 			// 예: type ( A struct{}; B interface{} ) 처럼 괄호로 묶인 경우
-			for _, spec := range d.Specs {
+			for _, spec := range declNode.Specs {
 				// TypeSpec만 관심 있다 (var, const는 건너뜀)
 				// ts, ok := spec.(*ast.TypeSpec) 는 "타입 단언(type assertion)"이다.
 				// spec이 *ast.TypeSpec 타입이면 ok=true, 아니면 ok=false
@@ -162,21 +164,21 @@ func ParseFile(path string) (*FileInfo, error) {
 		// FuncDecl: 함수 또는 메서드 선언
 		case *ast.FuncDecl:
 			fi := FuncInfo{
-				Name:       d.Name.Name,
-				IsExported: d.Name.IsExported(),
-				Line:       fset.Position(d.Pos()).Line,
+				Name:       declNode.Name.Name,
+				IsExported: declNode.Name.IsExported(),
+				Line:       fset.Position(declNode.Pos()).Line,
 			}
 
 			// 리시버(Receiver) 확인: 리시버가 있으면 메서드, 없으면 일반 함수
 			// 예: func (u *User) GetName() 에서 u *User 부분이 리시버
-			if d.Recv != nil && len(d.Recv.List) > 0 {
-				fi.Receiver = exprToString(d.Recv.List[0].Type)
+			if declNode.Recv != nil && len(declNode.Recv.List) > 0 {
+				fi.Receiver = exprToString(declNode.Recv.List[0].Type)
 			}
 
 			// 반환 타입 추출
 			// 예: func Foo() (User, error) → ReturnTypes: ["User", "error"]
-			if d.Type.Results != nil {
-				for _, result := range d.Type.Results.List {
+			if declNode.Type.Results != nil {
+				for _, result := range declNode.Type.Results.List {
 					fi.ReturnTypes = append(fi.ReturnTypes, exprToString(result.Type))
 				}
 			}
@@ -200,22 +202,22 @@ func ParseFile(path string) (*FileInfo, error) {
 // 이 함수는 재귀적으로(자기 자신을 호출하면서) 중첩된 타입도 처리한다.
 // 예: []*model.User → "[]" + "*" + "model.User"
 func exprToString(expr ast.Expr) string {
-	switch t := expr.(type) {
+	switch node := expr.(type) {
 	case *ast.Ident:
 		// 단순 식별자: User, string, int 등
-		return t.Name
+		return node.Name
 	case *ast.StarExpr:
 		// 포인터 타입: *Something
-		return "*" + exprToString(t.X) // t.X는 * 뒤의 타입
+		return "*" + exprToString(node.X) // node.X는 * 뒤의 타입
 	case *ast.SelectorExpr:
 		// 패키지.타입: model.User 에서 model은 X, User는 Sel
-		return exprToString(t.X) + "." + t.Sel.Name
+		return exprToString(node.X) + "." + node.Sel.Name
 	case *ast.ArrayType:
 		// 슬라이스/배열: []Something
-		return "[]" + exprToString(t.Elt) // t.Elt는 요소 타입
+		return "[]" + exprToString(node.Elt) // node.Elt는 요소 타입
 	case *ast.MapType:
 		// 맵: map[Key]Value
-		return "map[" + exprToString(t.Key) + "]" + exprToString(t.Value)
+		return "map[" + exprToString(node.Key) + "]" + exprToString(node.Value)
 	default:
 		// 알 수 없는 타입은 빈 문자열 반환
 		return ""
@@ -272,6 +274,9 @@ func ParseDirectory(root string) ([]*FileInfo, error) {
 		files = append(files, fi)
 		return nil
 	})
+	if err != nil {
+		return files, fmt.Errorf("디렉토리 순회 실패 %s: %w", root, err)
+	}
 
-	return files, err
+	return files, nil
 }

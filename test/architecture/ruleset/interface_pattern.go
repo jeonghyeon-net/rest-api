@@ -60,50 +60,61 @@ import (
 // 검사 대상은 "같은 파일 내"의 인터페이스, 구조체, 함수 관계다.
 // 파일 단위로 검사하는 이유: Go에서 인터페이스와 그 구현체는 같은 파일에 두는 것이 관례다.
 func CheckInterfacePatterns(files []*analyzer.FileInfo, cfg *Config) []report.Violation {
+	//nolint:prealloc // 각 파일에서 반환되는 위반 수가 가변적이므로 사전 할당이 불가능하다.
 	var violations []report.Violation
 
-	for _, f := range files {
-		// 파일 안의 타입들을 인터페이스와 구조체로 분류한다
-		var interfaces []analyzer.TypeInfo // 인터페이스 타입 목록
-		var structs []analyzer.TypeInfo    // 구조체(struct) 타입 목록
+	for _, file := range files {
+		violations = append(violations, checkFilePatterns(file)...)
+	}
 
-		for _, t := range f.Types {
-			if t.IsInterface {
-				interfaces = append(interfaces, t)
-			} else {
-				structs = append(structs, t)
-			}
+	return violations
+}
+
+// checkFilePatterns는 단일 파일의 인터페이스 패턴 규칙을 모두 검사한다.
+// CheckInterfacePatterns에서 파일별로 호출되며, 인지 복잡도를 낮추기 위해 분리했다.
+func checkFilePatterns(file *analyzer.FileInfo) []report.Violation {
+	var violations []report.Violation
+
+	// 파일 안의 타입들을 인터페이스와 구조체로 분류한다
+	var interfaces []analyzer.TypeInfo // 인터페이스 타입 목록
+	var structs []analyzer.TypeInfo    // 구조체(struct) 타입 목록
+
+	for _, t := range file.Types {
+		if t.IsInterface {
+			interfaces = append(interfaces, t)
+		} else {
+			structs = append(structs, t)
 		}
+	}
 
-		// 규칙 1 + 규칙 4: 공개 인터페이스에 대응하는 비공개 구현체와 생성자가 있는지 검사
-		// "3종 세트" = interface + impl + constructor
-		for _, iface := range interfaces {
-			if !iface.IsExported {
-				continue // 비공개 인터페이스는 검사 대상이 아님
-			}
-			if v := checkMissingImpl(f, iface, structs); v != nil {
-				violations = append(violations, *v)
-				continue // impl이 없으면 constructor 검사는 의미 없음
-			}
-			// impl은 있으니 3종 세트의 마지막: constructor도 있는지 검사
-			if v := checkMissingConstructor(f, iface); v != nil {
-				violations = append(violations, *v)
-			}
+	// 규칙 1 + 규칙 4: 공개 인터페이스에 대응하는 비공개 구현체와 생성자가 있는지 검사
+	// "3종 세트" = interface + impl + constructor
+	for _, iface := range interfaces {
+		if !iface.IsExported {
+			continue // 비공개 인터페이스는 검사 대상이 아님
 		}
-
-		// 규칙 2: 생성자(New*) 함수가 인터페이스를 반환하는지 검사
-		for _, fn := range f.Functions {
-			if v := checkConstructorReturn(f, fn, interfaces); v != nil {
-				violations = append(violations, *v)
-			}
+		if v := checkMissingImpl(file, iface, structs); v != nil {
+			violations = append(violations, *v)
+			continue // impl이 없으면 constructor 검사는 의미 없음
 		}
+		// impl은 있으니 3종 세트의 마지막: constructor도 있는지 검사
+		if v := checkMissingConstructor(file, iface); v != nil {
+			violations = append(violations, *v)
+		}
+	}
 
-		// 규칙 3: 구현체 struct가 공개(exported)되어 있지 않은지 검사
-		for _, s := range structs {
-			if s.IsExported {
-				if v := checkExportedImpl(f, s, interfaces); v != nil {
-					violations = append(violations, *v)
-				}
+	// 규칙 2: 생성자(New*) 함수가 인터페이스를 반환하는지 검사
+	for _, fn := range file.Functions {
+		if v := checkConstructorReturn(file, fn, interfaces); v != nil {
+			violations = append(violations, *v)
+		}
+	}
+
+	// 규칙 3: 구현체 struct가 공개(exported)되어 있지 않은지 검사
+	for _, s := range structs {
+		if s.IsExported {
+			if v := checkExportedImpl(file, s, interfaces); v != nil {
+				violations = append(violations, *v)
 			}
 		}
 	}
@@ -126,7 +137,7 @@ func CheckInterfacePatterns(files []*analyzer.FileInfo, cfg *Config) []report.Vi
 //
 //	type Repository interface { ... }  ← 공개 인터페이스만 덩그러니
 //	                                      (구현체가 없으니까 WARNING)
-func checkMissingImpl(f *analyzer.FileInfo, iface analyzer.TypeInfo, structs []analyzer.TypeInfo) *report.Violation {
+func checkMissingImpl(file *analyzer.FileInfo, iface analyzer.TypeInfo, structs []analyzer.TypeInfo) *report.Violation {
 	// 같은 파일에 비공개 구조체가 하나라도 있으면 OK
 	// (실제로 그 구조체가 인터페이스를 구현하는지까지는 AST만으로 확인이 어렵다)
 	for _, s := range structs {
@@ -139,7 +150,7 @@ func checkMissingImpl(f *analyzer.FileInfo, iface analyzer.TypeInfo, structs []a
 		Rule:     "interface/missing-impl",
 		Severity: report.Warning,
 		Message:  fmt.Sprintf("exported interface %q has no unexported implementation in the same file", iface.Name),
-		File:     f.Path,
+		File:     file.Path,
 		Line:     iface.Line,
 		Fix:      fmt.Sprintf("add unexported struct %q implementing %s in the same file", toLowerFirst(iface.Name), iface.Name),
 	}
@@ -175,9 +186,9 @@ func checkMissingImpl(f *analyzer.FileInfo, iface analyzer.TypeInfo, structs []a
 //	type Repository interface { ... }           ← 인터페이스 ✓
 //	type repository struct { ... }              ← 구현체 ✓
 //	                                               (생성자 없음 ✗)
-func checkMissingConstructor(f *analyzer.FileInfo, iface analyzer.TypeInfo) *report.Violation {
+func checkMissingConstructor(file *analyzer.FileInfo, iface analyzer.TypeInfo) *report.Violation {
 	// 파일의 모든 함수를 순회하며 생성자를 찾는다
-	for _, fn := range f.Functions {
+	for _, fn := range file.Functions {
 		// 생성자 조건: "New"로 시작, 공개 함수, 리시버 없음 (메서드가 아님)
 		if !fn.IsExported || !strings.HasPrefix(fn.Name, "New") || fn.Receiver != "" {
 			continue
@@ -197,7 +208,7 @@ func checkMissingConstructor(f *analyzer.FileInfo, iface analyzer.TypeInfo) *rep
 		Rule:     "interface/missing-constructor",
 		Severity: report.Warning,
 		Message:  fmt.Sprintf("exported interface %q has implementation but no constructor (New*) returning it", iface.Name),
-		File:     f.Path,
+		File:     file.Path,
 		Line:     iface.Line,
 		Fix:      fmt.Sprintf("add constructor: func New() %s { return &%s{} }", iface.Name, toLowerFirst(iface.Name)),
 	}
@@ -218,7 +229,7 @@ func checkMissingConstructor(f *analyzer.FileInfo, iface analyzer.TypeInfo) *rep
 // 나쁜 예: func New() *repository { return &repository{} }  ← 구체 타입 반환 ✗
 //
 // NestJS 비유: 모듈에서 useClass 대신 useFactory로 인터페이스 토큰을 반환하는 것과 비슷
-func checkConstructorReturn(f *analyzer.FileInfo, fn analyzer.FuncInfo, interfaces []analyzer.TypeInfo) *report.Violation {
+func checkConstructorReturn(file *analyzer.FileInfo, fn analyzer.FuncInfo, interfaces []analyzer.TypeInfo) *report.Violation {
 	// 생성자 조건에 안 맞으면 검사 대상이 아님
 	if !fn.IsExported || !strings.HasPrefix(fn.Name, "New") || fn.Receiver != "" {
 		return nil
@@ -252,9 +263,9 @@ func checkConstructorReturn(f *analyzer.FileInfo, fn analyzer.FuncInfo, interfac
 				Rule:     "interface/constructor-return",
 				Severity: report.Error,
 				Message:  fmt.Sprintf("constructor %q returns concrete type %q instead of interface %q", fn.Name, firstReturn, iface.Name),
-				File:     f.Path,
+				File:     file.Path,
 				Line:     fn.Line,
-				Fix:      fmt.Sprintf("change return type to %s", iface.Name),
+				Fix:      "change return type to " + iface.Name,
 			}
 		}
 	}
@@ -275,20 +286,20 @@ func checkConstructorReturn(f *analyzer.FileInfo, fn analyzer.FuncInfo, interfac
 // 수정 방법: 소문자로 시작하는 비공개 이름 사용
 //   - RepositoryImpl → repository
 //   - DefaultRepository → repository
-func checkExportedImpl(f *analyzer.FileInfo, s analyzer.TypeInfo, interfaces []analyzer.TypeInfo) *report.Violation {
+func checkExportedImpl(file *analyzer.FileInfo, structInfo analyzer.TypeInfo, interfaces []analyzer.TypeInfo) *report.Violation {
 	for _, iface := range interfaces {
 		if !iface.IsExported {
 			continue
 		}
 		// "인터페이스명 + Impl" 또는 "Default + 인터페이스명" 패턴 감지
-		if s.Name == iface.Name+"Impl" || s.Name == "Default"+iface.Name {
+		if structInfo.Name == iface.Name+"Impl" || structInfo.Name == "Default"+iface.Name {
 			return &report.Violation{
 				Rule:     "interface/exported-impl",
 				Severity: report.Warning,
-				Message:  fmt.Sprintf("struct %q appears to implement %q but is exported", s.Name, iface.Name),
-				File:     f.Path,
-				Line:     s.Line,
-				Fix:      fmt.Sprintf("make the implementation struct unexported: %q", toLowerFirst(s.Name)),
+				Message:  fmt.Sprintf("struct %q appears to implement %q but is exported", structInfo.Name, iface.Name),
+				File:     file.Path,
+				Line:     structInfo.Line,
+				Fix:      fmt.Sprintf("make the implementation struct unexported: %q", toLowerFirst(structInfo.Name)),
 			}
 		}
 	}

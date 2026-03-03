@@ -9,7 +9,7 @@
 //  3. InterfacePatterns (인터페이스 패턴): 인터페이스+구현체+생성자 패턴
 //  4. Structure (구조): 디렉토리 구조가 정해진 형태인지
 //  5. Sqlc (코드 생성): sqlc 설정 완전성 + 수기 코드 차단
-//  6. Testing (테스트 품질): goleak goroutine 누수 검출 강제
+//  6. Testing (테스트 품질): goleak goroutine 누수 검출, 빌드 태그 강제
 //
 // 핵심 원칙:
 //
@@ -110,49 +110,49 @@ func setup(t *testing.T) (*ruleset.Config, []*analyzer.FileInfo) {
 //   - ERROR 심각도 위반이 있으면 → 테스트 FAIL (t.Fatal)
 //   - WARNING만 있으면 → 테스트 PASS (로그에 경고만 출력)
 //   - 위반 없으면 → 테스트 PASS
-func TestArchitecture(t *testing.T) {
+func TestArchitecture(t *testing.T) { //nolint:paralleltest // 서브테스트가 allViolations 슬라이스를 공유하므로 병렬 실행 불가.
 	cfg, files := setup(t)
 
 	// 모든 서브테스트의 위반을 모아서 마지막에 종합 요약을 출력한다
 	var allViolations []report.Violation
 
 	// ── 서브테스트 1: 의존성 규칙 ──
-	t.Run("Dependencies", func(t *testing.T) {
+	t.Run("Dependencies", func(t *testing.T) { //nolint:paralleltest // allViolations 공유.
 		vs := ruleset.CheckDependencies(files, cfg)
 		allViolations = append(allViolations, vs...)
 		reportViolations(t, vs)
 	})
 
 	// ── 서브테스트 2: 네이밍 규칙 ──
-	t.Run("Naming", func(t *testing.T) {
+	t.Run("Naming", func(t *testing.T) { //nolint:paralleltest // allViolations 공유.
 		vs := ruleset.CheckNaming(files, cfg)
 		allViolations = append(allViolations, vs...)
 		reportViolations(t, vs)
 	})
 
 	// ── 서브테스트 3: 인터페이스 패턴 규칙 ──
-	t.Run("InterfacePatterns", func(t *testing.T) {
+	t.Run("InterfacePatterns", func(t *testing.T) { //nolint:paralleltest // allViolations 공유.
 		vs := ruleset.CheckInterfacePatterns(files, cfg)
 		allViolations = append(allViolations, vs...)
 		reportViolations(t, vs)
 	})
 
 	// ── 서브테스트 4: 디렉토리 구조 규칙 ──
-	t.Run("Structure", func(t *testing.T) {
+	t.Run("Structure", func(t *testing.T) { //nolint:paralleltest // allViolations 공유.
 		vs := ruleset.CheckStructure(cfg)
 		allViolations = append(allViolations, vs...)
 		reportViolations(t, vs)
 	})
 
 	// ── 서브테스트 5: sqlc 규칙 ──
-	t.Run("Sqlc", func(t *testing.T) {
+	t.Run("Sqlc", func(t *testing.T) { //nolint:paralleltest // allViolations 공유.
 		vs := ruleset.CheckSqlc(cfg)
 		allViolations = append(allViolations, vs...)
 		reportViolations(t, vs)
 	})
 
 	// ── 서브테스트 6: 테스트 품질 규칙 ──
-	t.Run("Testing", func(t *testing.T) {
+	t.Run("Testing", func(t *testing.T) { //nolint:paralleltest // allViolations 공유.
 		vs := ruleset.CheckTestingPatterns(cfg)
 		allViolations = append(allViolations, vs...)
 		reportViolations(t, vs)

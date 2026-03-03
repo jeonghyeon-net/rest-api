@@ -1,14 +1,13 @@
 #!/bin/sh
-# pre-push hook: push 전에 빌드, 테스트+커버리지, 아키텍처 규칙을 검증한다.
+# pre-push hook: push 전에 빌드와 테스트+커버리지를 검증한다.
 # 어느 단계에서든 실패하면 push가 즉시 차단된다. (fast-fail 전략)
 #
 # 실행 순서:
 #   1. make build       - 컴파일 성공 여부 확인
 #   2. make cover-check - 유닛+E2E 테스트 실행 및 커버리지 100% 검증
-#   3. make arch        - DDD 아키텍처 규칙 검증
 #
-# pre-commit에서 포맷/린트를 잡고, pre-push에서 빌드/테스트/아키텍처를 잡는 구조다.
-# 빌드, 테스트, 아키텍처 검증은 상대적으로 느리므로 커밋마다가 아닌 push 시점에 실행한다.
+# pre-commit에서 포맷/린트(아키텍처 규칙 포함)를 잡고,
+# pre-push에서 빌드/테스트를 잡는 구조다.
 #
 # 이 훅은 .githooks/ 디렉토리에 저장되어 git으로 버전 관리된다.
 # 활성화하려면: make setup (git config core.hooksPath .githooks 실행)
@@ -16,7 +15,7 @@
 # --- 1단계: make build (빌드 검증) ---
 # go build가 성공하는지 확인한다.
 # 컴파일 에러가 있으면 push를 차단하여 깨진 코드가 원격에 올라가는 것을 방지한다.
-echo "🔍 [1/3] 빌드 검증 중... (make build)"
+echo "🔍 [1/2] 빌드 검증 중... (make build)"
 
 make build
 if [ $? -ne 0 ]; then
@@ -26,12 +25,12 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-echo "✅ [1/3] 빌드 검증 통과"
+echo "✅ [1/2] 빌드 검증 통과"
 
 # --- 2단계: make cover-check (유닛+E2E 테스트 + 커버리지 100% 검증) ---
-# -tags=e2e로 유닛 테스트와 E2E 테스트를 한번에 실행하면서 커버리지를 측정한다.
+# -tags=unit,e2e로 유닛 테스트와 E2E 테스트를 한번에 실행하면서 커버리지를 측정한다.
 # 테스트 실패 시 또는 커버리지 100% 미만이면 push를 차단한다.
-echo "🔍 [2/3] 테스트 실행 및 커버리지 검증 중... (make cover-check)"
+echo "🔍 [2/2] 테스트 실행 및 커버리지 검증 중... (make cover-check)"
 
 make cover-check
 if [ $? -ne 0 ]; then
@@ -42,22 +41,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-echo "✅ [2/3] 테스트 통과 및 커버리지 100% 확인"
-
-# --- 3단계: make arch (아키텍처 규칙 검증) ---
-# DDD 아키텍처 규칙(의존성 방향, 네이밍, 인터페이스 패턴, 디렉토리 구조)을 검증한다.
-# go/ast 기반으로 소스 코드를 파싱하여 규칙 위반을 검출한다.
-echo "🔍 [3/3] 아키텍처 규칙 검증 중... (make arch)"
-
-make arch
-if [ $? -ne 0 ]; then
-    echo ""
-    echo "❌ 아키텍처 규칙 위반이 발견되어 push가 차단되었습니다."
-    echo "   위반 내용을 수정한 후 다시 push해 주세요."
-    exit 1
-fi
-
-echo "✅ [3/3] 아키텍처 규칙 검증 통과"
+echo "✅ [2/2] 테스트 통과 및 커버리지 100% 확인"
 echo ""
 echo "✅ 모든 검사 통과! push를 진행합니다."
 exit 0

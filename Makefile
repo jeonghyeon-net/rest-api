@@ -62,12 +62,15 @@ fmt:
 	golangci-lint fmt
 
 # 정적 분석(린트)을 실행하여 코드 품질 문제를 검출한다.
-# golangci-lint는 30개 이상의 린터를 통합 실행하는 메타 린터다.
-# nilaway는 Uber가 만든 nil 역참조(null pointer) 전용 정적 분석 도구다.
+# 3가지 도구를 순서대로 실행한다:
+#   1. golangci-lint: 54개 린터를 통합 실행하는 메타 린터
+#   2. nilaway: Uber가 만든 nil 역참조(null pointer) 전용 정적 분석 도구
+#   3. arch: go/ast 기반 아키텍처 규칙 검증 (DDD 의존성, 네이밍, 빌드 태그 등)
 # NestJS의 npm run lint (eslint)와 같은 역할이다.
 lint:
 	golangci-lint run
-	nilaway -exclude-errors-in-files="test/architecture" ./...
+	nilaway ./...
+	$(MAKE) arch
 
 # 유닛 테스트만 실행한다. (//go:build unit 태그가 붙은 테스트 파일)
 # -tags=unit으로 유닛 테스트 파일만 컴파일한다.
@@ -113,14 +116,13 @@ cover-check:
 		exit 1; \
 	fi
 
-# 유닛 테스트 + E2E 테스트 + 아키텍처 테스트를 모두 실행한다.
+# 유닛 테스트 + E2E 테스트를 모두 실행한다.
 # -tags=unit,e2e로 유닛과 E2E를 한번에 실행하므로 중복 없이 전체 테스트를 커버한다.
 # CI 파이프라인에서 사용하거나, push 전 전체 검증에 사용한다.
-# $(MAKE)는 재귀적 make 호출로, 각 타겟을 순서대로 실행한다.
+# 아키텍처 규칙 검증(arch)은 정적 분석이므로 make lint에 포함되어 있다.
 # NestJS의 npm run test:all과 같은 역할이다.
 test-all:
 	go test -tags=unit,e2e $$(go list ./... | grep -v test/architecture) -count=1 2>&1 | grep -v '\[no test'
-	$(MAKE) arch
 
 # 아키텍처 규칙 준수 여부를 자동 검증한다.
 # test/architecture/ 디렉터리의 테스트가 DDD 레이어 의존성, 네이밍 규칙,

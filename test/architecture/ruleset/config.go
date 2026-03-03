@@ -11,6 +11,7 @@ package ruleset
 
 import (
 	"bufio" // 버퍼링된 I/O (파일을 줄 단위로 읽을 때 사용)
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,6 +36,7 @@ var (
 	//   svc/       - 공개 서비스 인터페이스
 	//   handler/   - HTTP/gRPC 요청 핸들러
 	//   infra/     - 외부 서비스 클라이언트
+	//nolint:gochecknoglobals // 아키텍처 규칙에서 사용하는 불변 설정값이다.
 	AllowedDomainDirs = []string{"subdomain", "svc", "handler", "infra"}
 
 	// AllowedSubdomainLayers: 서브도메인 안에 허용되는 레이어 디렉토리 목록.
@@ -43,6 +45,7 @@ var (
 	//   model/ - 도메인 모델 (엔티티, 값 객체). 비즈니스 규칙의 핵심.
 	//   repo/  - 리포지토리 인터페이스. 데이터 저장/조회 방법을 추상화.
 	//   svc/   - 서비스. 비즈니스 로직을 구현. model과 repo를 조합.
+	//nolint:gochecknoglobals // 아키텍처 규칙에서 사용하는 불변 설정값이다.
 	AllowedSubdomainLayers = []string{"model", "repo", "svc"}
 
 	// AllowedHandlerProtocols: handler/ 아래에 허용되는 프로토콜 디렉토리.
@@ -50,11 +53,13 @@ var (
 	//   http/    - REST API 핸들러
 	//   grpc/    - gRPC 핸들러
 	//   jsonrpc/ - JSON-RPC 핸들러
+	//nolint:gochecknoglobals // 아키텍처 규칙에서 사용하는 불변 설정값이다.
 	AllowedHandlerProtocols = []string{"http", "grpc", "jsonrpc"}
 
 	// ForbiddenPackageNames: 사용이 금지된 패키지 이름 목록.
 	// 이런 이름의 패키지는 "이 패키지가 뭘 하는지" 알 수 없어서 나쁜 패키지명이다.
 	// 예를 들어 "util" 패키지에는 아무 기능이나 들어갈 수 있어서 점점 비대해진다.
+	//nolint:gochecknoglobals // 아키텍처 규칙에서 사용하는 불변 설정값이다.
 	ForbiddenPackageNames = []string{"util", "utils", "common", "misc", "helper", "helpers", "shared", "lib"}
 
 	// LayerOrder는 레이어 간 의존성 방향을 인덱스로 정의한다.
@@ -70,6 +75,7 @@ var (
 	//   model → repo ✗ (안쪽에서 바깥쪽으로 = 위반!)
 	//   model → svc  ✗ (안쪽에서 바깥쪽으로 = 위반!)
 	//   repo → svc   ✗ (안쪽에서 바깥쪽으로 = 위반!)
+	//nolint:gochecknoglobals // 아키텍처 규칙에서 사용하는 불변 설정값이다.
 	LayerOrder = []string{"model", "repo", "svc"}
 )
 
@@ -97,20 +103,24 @@ func NewConfig(projectRoot string) (*Config, error) {
 //	module rest-api        ← 이 줄에서 "rest-api"를 추출
 //	go 1.25.0
 func readModuleName(projectRoot string) (string, error) {
-	f, err := os.Open(filepath.Join(projectRoot, "go.mod"))
+	file, err := os.Open(filepath.Join(projectRoot, "go.mod"))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("go.mod 파일 열기 실패: %w", err)
 	}
-	defer func() { _ = f.Close() }() // 함수가 끝나면 파일을 닫는다 (defer = 지연 실행)
+	defer func() { _ = file.Close() }() // 함수가 끝나면 파일을 닫는다 (defer = 지연 실행)
 
 	// bufio.Scanner를 사용해서 파일을 줄 단위로 읽는다.
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(file)
 	for scanner.Scan() { // 한 줄씩 읽기
 		line := strings.TrimSpace(scanner.Text()) // 앞뒤 공백 제거
-		if strings.HasPrefix(line, "module ") {
-			// "module " 접두사를 제거하면 모듈 이름만 남는다
-			return strings.TrimSpace(strings.TrimPrefix(line, "module ")), nil
+		// CutPrefix는 접두사가 있으면 제거한 문자열과 true를 반환한다.
+		// HasPrefix+TrimPrefix 조합보다 간결한 Go 1.20+ 스타일이다.
+		if modName, found := strings.CutPrefix(line, "module "); found {
+			return strings.TrimSpace(modName), nil
 		}
 	}
-	return "", scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("go.mod 파일 읽기 실패: %w", err)
+	}
+	return "", nil
 }

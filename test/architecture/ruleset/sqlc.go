@@ -136,7 +136,10 @@ func CheckSqlc(cfg *Config) []report.Violation {
 		// filepath.Rel: 절대 경로를 프로젝트 루트 기준 상대 경로로 변환한다.
 		// 예: "/home/user/project/internal/domain/user/subdomain/core/repo"
 		//   → "internal/domain/user/subdomain/core/repo"
-		relPath, _ := filepath.Rel(cfg.ProjectRoot, repoPath)
+		relPath, err := filepath.Rel(cfg.ProjectRoot, repoPath)
+		if err != nil {
+			continue
+		}
 		cleaned := filepath.Clean(relPath)
 
 		// sqlc.yaml의 등록된 경로 Set에 이 경로가 없으면 → 누락된 항목
@@ -154,7 +157,7 @@ func CheckSqlc(cfg *Config) []report.Violation {
 		// 이 repo/ 디렉토리에 수기 작성된 .go 파일이 있는지 확인한다.
 		// (.sql 파일이 있는 repo/는 sqlc가 관리하는 디렉토리이므로
 		//  모든 .go 파일은 sqlc가 자동 생성한 것이어야 한다)
-		violations = append(violations, checkManualGoFiles(repoPath, cleaned)...)
+		violations = append(violations, checkManualGoFiles(repoPath)...)
 	}
 
 	// ── 규칙 3: sqlc/orphan-sqlc-entry ──
@@ -163,7 +166,10 @@ func CheckSqlc(cfg *Config) []report.Violation {
 	// 먼저 .sql 파일이 있는 repo/ 경로들을 Set으로 만든다 (위에서 찾은 경로들).
 	sqlRepoSet := make(map[string]bool)
 	for _, p := range sqlRepoPaths {
-		relPath, _ := filepath.Rel(cfg.ProjectRoot, p)
+		relPath, err := filepath.Rel(cfg.ProjectRoot, p)
+		if err != nil {
+			continue
+		}
 		sqlRepoSet[filepath.Clean(relPath)] = true
 	}
 	// sqlc.yaml에 등록된 각 경로에 대해, 실제 .sql 파일이 있는지 확인한다.
@@ -204,7 +210,7 @@ func parseSqlcYaml(projectRoot string) (*sqlcConfig, error) {
 	// 작은 설정 파일이므로 전체를 한 번에 읽어도 문제없다.
 	data, err := os.ReadFile(filepath.Join(projectRoot, "sqlc.yaml"))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("sqlc.yaml 읽기 실패: %w", err)
 	}
 
 	var cfg sqlcConfig
@@ -258,9 +264,10 @@ func findSQLRepoPaths(projectRoot string) []string {
 	//   nil → 순회 계속
 	//   filepath.SkipDir → 이 디렉토리의 하위 항목 건너뛰기
 	//   그 외 에러 → 순회 중단
-	_ = filepath.WalkDir(domainRoot, func(path string, d os.DirEntry, err error) error {
+	//nolint:errcheck,gosec // WalkDir 콜백 내에서 에러를 개별 처리한다 (건너뛰기).
+	filepath.WalkDir(domainRoot, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			return nil // 에러 발생 시 해당 항목만 건너뛰고 계속 순회
+			return nil //nolint:nilerr // 접근 에러가 발생한 항목은 건너뛰고 순회를 계속한다.
 		}
 
 		// 디렉토리가 아니거나, 이름이 "repo"가 아니면 건너뛴다
@@ -271,7 +278,7 @@ func findSQLRepoPaths(projectRoot string) []string {
 		// "repo" 디렉토리를 찾았으니, 안에 .sql 파일이 있는지 확인한다
 		entries, readErr := os.ReadDir(path)
 		if readErr != nil {
-			return nil // 읽기 실패 시 건너뛰기
+			return nil //nolint:nilerr // 읽기 실패한 디렉토리는 건너뛰고 순회를 계속한다.
 		}
 		for _, entry := range entries {
 			// .sql 확장자를 가진 파일이 하나라도 있으면 이 디렉토리를 결과에 추가
@@ -305,7 +312,7 @@ func findSQLRepoPaths(projectRoot string) []string {
 //	sqlc가 관리하는 repo/ 디렉토리에 수동으로 Go 파일을 추가하면,
 //	sqlc가 코드를 재생성할 때 충돌이 발생하거나, 수기 코드가 덮어씌워질 수 있다.
 //	비즈니스 로직은 svc/ 레이어에 작성해야 한다.
-func checkManualGoFiles(repoPath, relPath string) []report.Violation {
+func checkManualGoFiles(repoPath string) []report.Violation {
 	var violations []report.Violation
 
 	entries, err := os.ReadDir(repoPath)
@@ -325,7 +332,7 @@ func checkManualGoFiles(repoPath, relPath string) []report.Violation {
 			violations = append(violations, report.Violation{
 				Rule:     "sqlc/manual-code-in-sqlc-repo",
 				Severity: report.Error,
-				Message:  fmt.Sprintf("sqlc를 사용하는 repo/ 디렉토리에 수기 작성된 Go 파일 발견: %s", entry.Name()),
+				Message:  "sqlc를 사용하는 repo/ 디렉토리에 수기 작성된 Go 파일 발견: " + entry.Name(),
 				File:     filePath,
 				Fix:      "repo/의 Go 코드는 sqlc가 자동 생성해야 한다. 비즈니스 로직은 svc/ 레이어에 작성",
 			})
@@ -365,22 +372,26 @@ func checkManualGoFiles(repoPath, relPath string) []report.Violation {
 //	NestJS의 finally 블록과 비슷하지만, 선언 위치가 더 자유롭다.
 //	예: defer f.Close()  → 이 함수가 return될 때 f.Close()가 호출됨
 func hasSqlcGeneratedHeader(filePath string) bool {
-	f, err := os.Open(filePath)
+	file, err := os.Open(filePath)
 	if err != nil {
 		return false // 파일을 열 수 없으면 헤더 없는 것으로 간주
 	}
-	// defer: 이 함수가 끝날 때(어떤 경로로 return하든) f.Close()를 실행한다.
-	// _ = f.Close()에서 _는 에러 반환값을 무시하는 Go 관용 표현이다.
-	defer func() { _ = f.Close() }()
+	// defer: 이 함수가 끝날 때(어떤 경로로 return하든) file.Close()를 실행한다.
+	// _ = file.Close()에서 _는 에러 반환값을 무시하는 Go 관용 표현이다.
+	defer func() { _ = file.Close() }()
 
 	// bufio.Scanner: 파일을 줄 단위로 효율적으로 읽는 도구다.
 	// 내부적으로 버퍼를 사용해서 디스크 I/O 횟수를 줄인다.
 	// Node.js의 readline.createInterface와 비슷하다.
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(file)
+	// sqlcHeaderMaxLines는 sqlc 생성 헤더를 검색할 최대 줄 수다.
+	// sqlc 헤더는 항상 파일 상단에 위치하므로 5줄이면 충분하다.
+	const sqlcHeaderMaxLines = 5
+
 	lineCount := 0
 	for scanner.Scan() {
 		lineCount++
-		if lineCount > 5 {
+		if lineCount > sqlcHeaderMaxLines {
 			break // 5줄을 넘으면 더 이상 확인할 필요 없다
 		}
 		// strings.Contains: 문자열 안에 특정 부분 문자열이 있는지 확인한다.

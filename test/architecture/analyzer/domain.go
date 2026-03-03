@@ -25,6 +25,10 @@ import (
 	"strings"
 )
 
+// subdomainLayerIndex는 subdomain/{서브도메인명}/{레이어} 구조에서
+// 레이어 이름의 위치(인덱스 2)까지 포함하는 최소 경로 깊이다.
+const subdomainLayerIndex = 3
+
 // DomainPath는 하나의 파일이 프로젝트 구조에서 어디에 위치하는지를 나타낸다.
 //
 // 도메인 파일과 Saga 파일 모두 이 하나의 구조체로 표현한다.
@@ -51,8 +55,8 @@ type DomainPath struct {
 	File      string // 파일명. 예: "user.go", "alias.go", "saga.go"
 
 	// ── Saga 관련 필드 ──
-	IsSaga   bool   // true면 Saga 파일, false면 도메인 파일
 	SagaName string // Saga 이름. 예: "create_order", "cancel_order"
+	IsSaga   bool   // true면 Saga 파일, false면 도메인 파일
 }
 
 // ParseDomainPath는 프로젝트 루트 기준 상대 경로를 받아서 DomainPath로 분해한다.
@@ -172,7 +176,7 @@ func parseDomainPathParts(parts []string, internalIdx int) *DomainPath {
 		if len(remaining) >= 2 {
 			dp.Subdomain = remaining[1] // 서브도메인 이름 (예: "core", "role")
 		}
-		if len(remaining) >= 3 {
+		if len(remaining) >= subdomainLayerIndex {
 			dp.Layer = remaining[2] // 레이어 이름 (예: "model", "repo", "svc")
 		}
 	case "svc":

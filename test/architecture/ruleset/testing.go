@@ -1,9 +1,10 @@
 // testing.go — 테스트 품질 규칙을 정의한다.
 //
-// 3가지 규칙을 검사한다:
+// 4가지 규칙을 검사한다:
 //
 //   - testing/missing-goleak: 테스트 파일이 있는 패키지에 goleak이 적용되어 있는지 확인
 //   - testing/missing-testify: 테스트 함수가 있는 파일에 testify를 사용하는지 확인
+//   - testing/missing-build-tag: 테스트 파일에 //go:build unit 또는 //go:build e2e 태그가 있는지 확인
 //   - testing/raw-assertion: testify를 import했지만 t.Fatal/t.Error 등 표준 단언도 함께 사용하는지 확인
 //
 // goleak(go.uber.org/goleak)은 Uber가 만든 goroutine 누수 검출 도구다.
@@ -21,6 +22,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"rest-api/test/architecture/report"
@@ -31,6 +33,8 @@ const goleakImportPath = "go.uber.org/goleak"
 
 // testifyImportPrefixes는 testify 패키지의 import 경로 접두사 목록이다.
 // require, assert, suite 중 하나라도 import하면 testify를 사용하는 것으로 판단한다.
+//
+//nolint:gochecknoglobals // 테스트 품질 규칙에서 사용하는 불변 설정값이다.
 var testifyImportPrefixes = []string{
 	"github.com/stretchr/testify/require",
 	"github.com/stretchr/testify/assert",
@@ -45,6 +49,8 @@ var testifyImportPrefixes = []string{
 //
 // t.Log, t.Logf, t.Skip, t.Cleanup, t.Run 등은 testify가 대체하지 않는
 // 테스트 인프라 메서드이므로 금지 대상이 아니다.
+//
+//nolint:gochecknoglobals // 테스트 품질 규칙에서 사용하는 불변 설정값이다.
 var rawAssertionMethods = map[string]bool{
 	"Fatal":  true,
 	"Fatalf": true,
@@ -68,6 +74,7 @@ type testFileInfo struct {
 	hasTestFn        bool   // TestMain이 아닌 Test* 함수가 있는지
 	hasTestify       bool   // testify 패키지를 import하는지
 	hasRawAssertions bool   // t.Fatal, t.Fatalf, t.Error, t.Errorf 등 표준 단언을 직접 호출하는지
+	hasBuildTag      bool   // //go:build unit 또는 //go:build e2e 태그가 있는지
 }
 
 // CheckTestingPatterns는 테스트 품질 규칙을 검사하여 위반 목록을 반환한다.
@@ -77,7 +84,8 @@ type testFileInfo struct {
 // 검사 내용:
 //  1. (패키지 단위) 테스트 파일이 있는 패키지에 TestMain + goleak이 있는지
 //  2. (파일 단위) Test* 함수가 있는 파일에 testify를 import하는지
-//  3. (파일 단위) testify를 import한 파일에서 t.Fatal/t.Error 등 표준 단언을 혼용하지 않는지
+//  3. (파일 단위) 모든 테스트 파일에 //go:build unit 또는 //go:build e2e 태그가 있는지
+//  4. (파일 단위) testify를 import한 파일에서 t.Fatal/t.Error 등 표준 단언을 혼용하지 않는지
 //
 // 테스트 파일을 AST로 파싱하여 함수 선언과 import 문을 검사한다.
 // 기존 analyzer.ParseDirectory는 _test.go를 건너뛰므로, 여기서 별도로 파싱한다.
@@ -100,7 +108,10 @@ func CheckTestingPatterns(cfg *Config) []report.Violation {
 			continue
 		}
 
-		relDir, _ := filepath.Rel(cfg.ProjectRoot, pkg.dir)
+		relDir, err := filepath.Rel(cfg.ProjectRoot, pkg.dir)
+		if err != nil {
+			continue
+		}
 
 		if !pkg.hasTestMain {
 			violations = append(violations, report.Violation{
@@ -128,7 +139,10 @@ func CheckTestingPatterns(cfg *Config) []report.Violation {
 		}
 
 		if !file.hasTestify {
-			relPath, _ := filepath.Rel(cfg.ProjectRoot, file.path)
+			relPath, err := filepath.Rel(cfg.ProjectRoot, file.path)
+			if err != nil {
+				continue
+			}
 			violations = append(violations, report.Violation{
 				Rule:     "testing/missing-testify",
 				Severity: report.Error,
@@ -139,7 +153,29 @@ func CheckTestingPatterns(cfg *Config) []report.Violation {
 		}
 	}
 
-	// ── 규칙 3: raw assertion (파일 단위) ──
+	// ── 규칙 3: 빌드 태그 (파일 단위) ──
+	// 모든 _test.go 파일에 //go:build unit 또는 //go:build e2e 태그가 있어야 한다.
+	// 빌드 태그가 없으면 `go test ./...`에서 의도치 않게 실행될 수 있다.
+	// 이 프로젝트는 unit/e2e 테스트를 분리 실행하므로, 태그 누락은 반드시 막아야 한다.
+	for _, file := range files {
+		if file.hasBuildTag {
+			continue
+		}
+
+		relPath, err := filepath.Rel(cfg.ProjectRoot, file.path)
+		if err != nil {
+			continue
+		}
+		violations = append(violations, report.Violation{
+			Rule:     "testing/missing-build-tag",
+			Severity: report.Error,
+			Message:  "테스트 파일에 //go:build unit 또는 //go:build e2e 태그가 없다",
+			File:     relPath,
+			Fix:      "파일 첫 줄에 //go:build unit 또는 //go:build e2e를 추가하라",
+		})
+	}
+
+	// ── 규칙 4: raw assertion (파일 단위) ──
 	// testify를 import했지만 t.Fatal, t.Error 등 표준 단언도 함께 사용하는 혼용을 잡는다.
 	// testify를 import하지 않은 경우는 규칙 2(missing-testify)에서 이미 잡으므로 여기서는 제외한다.
 	for _, file := range files {
@@ -147,7 +183,10 @@ func CheckTestingPatterns(cfg *Config) []report.Violation {
 			continue
 		}
 
-		relPath, _ := filepath.Rel(cfg.ProjectRoot, file.path)
+		relPath, err := filepath.Rel(cfg.ProjectRoot, file.path)
+		if err != nil {
+			continue
+		}
 		violations = append(violations, report.Violation{
 			Rule:     "testing/raw-assertion",
 			Severity: report.Error,
@@ -166,9 +205,10 @@ func collectTestInfo(rootDir string) ([]testPackageInfo, []testFileInfo) {
 	pkgMap := make(map[string]*testPackageInfo)
 	var files []testFileInfo
 
-	_ = filepath.WalkDir(rootDir, func(path string, d os.DirEntry, err error) error {
+	//nolint:errcheck,gosec // WalkDir 콜백 내에서 에러를 개별 처리한다 (건너뛰기).
+	filepath.WalkDir(rootDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // 접근 에러가 발생한 항목은 건너뛰고 순회를 계속한다.
 		}
 
 		if d.IsDir() {
@@ -219,13 +259,20 @@ func analyzeTestFile(path string, pkg *testPackageInfo) testFileInfo {
 	info := testFileInfo{path: path}
 
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, path, nil, 0)
+	// parser.ParseComments: 주석도 AST에 포함시킨다.
+	// 빌드 태그(//go:build ...)는 주석으로 표현되므로, 주석 파싱이 필수다.
+	astFile, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
 	if err != nil {
 		return info
 	}
 
+	// 빌드 태그 검사: //go:build 주석에 unit 또는 e2e가 포함되어 있는지 확인한다.
+	// Go 1.17+에서 //go:build는 빌드 제약 조건(build constraint)을 지정하는 공식 문법이다.
+	// 이 프로젝트에서는 모든 테스트 파일이 unit 또는 e2e로 분류되어야 한다.
+	info.hasBuildTag = detectBuildTag(astFile)
+
 	// import 목록을 검사한다
-	for _, imp := range f.Imports {
+	for _, imp := range astFile.Imports {
 		importPath := strings.Trim(imp.Path.Value, `"`)
 
 		// goleak import 확인
@@ -235,16 +282,13 @@ func analyzeTestFile(path string, pkg *testPackageInfo) testFileInfo {
 
 		// testify import 확인
 		// require, assert, suite 중 하나라도 import하면 testify 사용으로 판단
-		for _, prefix := range testifyImportPrefixes {
-			if importPath == prefix {
-				info.hasTestify = true
-				break
-			}
+		if slices.Contains(testifyImportPrefixes, importPath) {
+			info.hasTestify = true
 		}
 	}
 
 	// 최상위 함수 선언을 검사한다
-	for _, decl := range f.Decls {
+	for _, decl := range astFile.Decls {
 		funcDecl, ok := decl.(*ast.FuncDecl)
 		if !ok {
 			continue
@@ -269,7 +313,7 @@ func analyzeTestFile(path string, pkg *testPackageInfo) testFileInfo {
 	// 함수 본문에서 표준 라이브러리의 단언 메서드(t.Fatal 등) 사용을 검사한다.
 	// testify와의 혼용을 방지하기 위해, testing.T 파라미터에 대한
 	// Fatal, Fatalf, Error, Errorf 호출을 감지한다.
-	info.hasRawAssertions = detectRawAssertions(f)
+	info.hasRawAssertions = detectRawAssertions(astFile)
 
 	return info
 }
@@ -285,11 +329,11 @@ func analyzeTestFile(path string, pkg *testPackageInfo) testFileInfo {
 //
 // FuncLit(익명 함수)도 검사하므로 t.Run() 콜백 내부의 호출도 잡아낸다.
 // 예: t.Run("sub", func(t *testing.T) { t.Fatal("...") })
-func detectRawAssertions(f *ast.File) bool {
+func detectRawAssertions(astFile *ast.File) bool {
 	// 1단계: 파일 내 모든 함수에서 *testing.T 파라미터 이름을 수집한다.
 	// 관례적으로 t를 사용하지만, tt, testingT 등 다른 이름도 잡기 위해 동적으로 수집한다.
 	tNames := make(map[string]bool)
-	ast.Inspect(f, func(n ast.Node) bool {
+	ast.Inspect(astFile, func(n ast.Node) bool {
 		switch fn := n.(type) {
 		case *ast.FuncDecl:
 			// 일반 함수 선언 (예: func TestFoo(t *testing.T))
@@ -318,7 +362,7 @@ func detectRawAssertions(f *ast.File) bool {
 	//           ├─ X: *ast.Ident (수신자, 예: "t")
 	//           └─ Sel: *ast.Ident (메서드명, 예: "Fatal")
 	found := false
-	ast.Inspect(f, func(n ast.Node) bool {
+	ast.Inspect(astFile, func(n ast.Node) bool {
 		if found {
 			return false // 이미 발견했으면 순회를 중단한다
 		}
@@ -396,4 +440,47 @@ func findTestingTParam(params *ast.FieldList) string {
 	}
 
 	return ""
+}
+
+// allowedBuildTags는 이 프로젝트에서 허용하는 빌드 태그 목록이다.
+// 모든 _test.go 파일은 이 중 하나를 //go:build 주석으로 선언해야 한다.
+//
+//nolint:gochecknoglobals // 테스트 품질 규칙에서 사용하는 불변 설정값이다.
+var allowedBuildTags = []string{"unit", "e2e"}
+
+// detectBuildTag는 파일의 주석에서 //go:build 빌드 태그를 찾아
+// unit 또는 e2e 중 하나가 포함되어 있는지 확인한다.
+//
+// Go 1.17+에서 빌드 제약 조건은 //go:build 주석으로 지정한다.
+// 예: //go:build unit
+//
+// AST에서 주석은 f.Comments에 []*ast.CommentGroup으로 저장된다.
+// 각 CommentGroup은 연속된 주석 줄들의 묶음이고,
+// 그 안에 Comment.Text가 개별 주석 문자열이다.
+// 예: "//go:build unit\n" → Text는 "//go:build unit"
+func detectBuildTag(f *ast.File) bool {
+	for _, cg := range f.Comments {
+		for _, c := range cg.List {
+			text := c.Text
+			// //go:build 접두사로 시작하는 주석만 검사한다.
+			if !strings.HasPrefix(text, "//go:build ") {
+				continue
+			}
+
+			// //go:build 뒤의 제약 조건 문자열을 추출한다.
+			// 예: "//go:build unit" → "unit"
+			// 예: "//go:build unit && !race" → "unit && !race"
+			constraint := strings.TrimPrefix(text, "//go:build ")
+
+			// 허용된 태그(unit, e2e) 중 하나가 제약 조건에 포함되어 있는지 확인한다.
+			// strings.Contains를 사용하므로 "unit && !race" 같은 복합 조건도 통과한다.
+			for _, tag := range allowedBuildTags {
+				if strings.Contains(constraint, tag) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
 }

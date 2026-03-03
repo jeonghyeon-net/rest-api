@@ -42,34 +42,37 @@ import (
 func CheckNaming(files []*analyzer.FileInfo, cfg *Config) []report.Violation {
 	var violations []report.Violation
 
-	for _, f := range files {
+	for _, file := range files {
 		// 규칙 1: 금지된 패키지명 검사
-		if v := checkForbiddenPackageName(f); v != nil {
+		if v := checkForbiddenPackageName(file); v != nil {
 			violations = append(violations, *v)
 		}
 
 		// 파일 안의 각 타입에 대해 검사
-		for _, t := range f.Types {
+		for _, t := range file.Types {
 			// 규칙 2: 패키지 스터터 검사
-			if v := checkPackageStutter(f, t); v != nil {
+			if v := checkPackageStutter(file, t); v != nil {
 				violations = append(violations, *v)
 			}
 			// 규칙 3: Impl 접미사 검사
-			if v := checkImplSuffix(f, t); v != nil {
+			if v := checkImplSuffix(file, t); v != nil {
 				violations = append(violations, *v)
 			}
 		}
 
 		// 파일 경로 기반 규칙은 도메인 경로 정보가 필요하다
-		relPath, _ := filepath.Rel(cfg.ProjectRoot, f.Path)
+		relPath, err := filepath.Rel(cfg.ProjectRoot, file.Path)
+		if err != nil {
+			continue
+		}
 		dp := analyzer.ParseDomainPath(relPath)
 		if dp != nil {
 			// 규칙 4: 파일명-인터페이스명 일치 검사
-			if v := checkFileInterfaceMatch(f, dp); v != nil {
+			if v := checkFileInterfaceMatch(file, dp); v != nil {
 				violations = append(violations, *v)
 			}
 			// 규칙 5: 레이어 접미사 파일명 검사
-			if v := checkLayerSuffixFilename(f, dp); v != nil {
+			if v := checkLayerSuffixFilename(file, dp); v != nil {
 				violations = append(violations, *v)
 			}
 		}
@@ -89,15 +92,15 @@ func CheckNaming(files []*analyzer.FileInfo, cfg *Config) []report.Violation {
 // 이런 패키지명이 나쁜 이유:
 //   - "util"에 뭘 넣을까? → 아무거나 다 넣게 됨 → 패키지가 비대해짐
 //   - 대안: 구체적인 이름 사용. 예: "util" 대신 "timeformat", "validator" 등
-func checkForbiddenPackageName(f *analyzer.FileInfo) *report.Violation {
+func checkForbiddenPackageName(file *analyzer.FileInfo) *report.Violation {
 	for _, forbidden := range ForbiddenPackageNames {
 		// strings.EqualFold: 대소문자 구분 없이 비교. "UTIL" == "util" → true
-		if strings.EqualFold(f.Package, forbidden) {
+		if strings.EqualFold(file.Package, forbidden) {
 			return &report.Violation{
 				Rule:     "naming/forbidden-package",
 				Severity: report.Error,
-				Message:  fmt.Sprintf("package name %q is forbidden", f.Package),
-				File:     f.Path,
+				Message:  fmt.Sprintf("package name %q is forbidden", file.Package),
+				File:     file.Path,
 				Fix:      "rename package to something more specific and descriptive",
 			}
 		}
@@ -117,40 +120,40 @@ func checkForbiddenPackageName(f *analyzer.FileInfo) *report.Violation {
 //
 // 접두사 스터터: package "repo", type "RepoManager" → repo.RepoManager ✗ → repo.Manager ✓
 // 접미사 스터터: package "repo", type "AppRepo" → repo.AppRepo ✗ → repo.App ✓
-func checkPackageStutter(f *analyzer.FileInfo, t analyzer.TypeInfo) *report.Violation {
+func checkPackageStutter(file *analyzer.FileInfo, typeInfo analyzer.TypeInfo) *report.Violation {
 	// 비공개 타입(소문자 시작)은 외부에서 "패키지명.타입명"으로 안 쓰므로 검사 불필요
-	if !t.IsExported {
+	if !typeInfo.IsExported {
 		return nil
 	}
 
-	pkg := strings.ToLower(f.Package) // 대소문자 무시 비교를 위해 소문자로 변환
-	nameLower := strings.ToLower(t.Name)
+	pkg := strings.ToLower(file.Package) // 대소문자 무시 비교를 위해 소문자로 변환
+	nameLower := strings.ToLower(typeInfo.Name)
 
 	// 접두사 스터터 검사: 타입 이름이 패키지 이름으로 시작하는 경우
 	// 예: package "repo", type "RepoManager" → "repomanager"가 "repo"로 시작
-	if len(t.Name) > len(pkg) && strings.HasPrefix(nameLower, pkg) {
-		suggested := t.Name[len(pkg):] // "RepoManager" → "Manager"
+	if len(typeInfo.Name) > len(pkg) && strings.HasPrefix(nameLower, pkg) {
+		suggested := typeInfo.Name[len(pkg):] // "RepoManager" → "Manager"
 		return &report.Violation{
 			Rule:     "naming/package-stutter",
 			Severity: report.Warning,
-			Message:  fmt.Sprintf("type %q stutters with package name %q (%s.%s)", t.Name, f.Package, f.Package, t.Name),
-			File:     f.Path,
-			Line:     t.Line,
-			Fix:      fmt.Sprintf("rename to %q (callers use %s.%s)", suggested, f.Package, suggested),
+			Message:  fmt.Sprintf("type %q stutters with package name %q (%s.%s)", typeInfo.Name, file.Package, file.Package, typeInfo.Name),
+			File:     file.Path,
+			Line:     typeInfo.Line,
+			Fix:      fmt.Sprintf("rename to %q (callers use %s.%s)", suggested, file.Package, suggested),
 		}
 	}
 
 	// 접미사 스터터 검사: 타입 이름이 패키지 이름으로 끝나는 경우
 	// 예: package "repo", type "AppRepo" → "apprepo"가 "repo"로 끝남
-	if len(t.Name) > len(pkg) && strings.HasSuffix(nameLower, pkg) {
-		suggested := t.Name[:len(t.Name)-len(pkg)] // "AppRepo" → "App"
+	if len(typeInfo.Name) > len(pkg) && strings.HasSuffix(nameLower, pkg) {
+		suggested := typeInfo.Name[:len(typeInfo.Name)-len(pkg)] // "AppRepo" → "App"
 		return &report.Violation{
 			Rule:     "naming/package-stutter",
 			Severity: report.Warning,
-			Message:  fmt.Sprintf("type %q stutters with package name %q (%s.%s)", t.Name, f.Package, f.Package, t.Name),
-			File:     f.Path,
-			Line:     t.Line,
-			Fix:      fmt.Sprintf("rename to %q (callers use %s.%s)", suggested, f.Package, suggested),
+			Message:  fmt.Sprintf("type %q stutters with package name %q (%s.%s)", typeInfo.Name, file.Package, file.Package, typeInfo.Name),
+			File:     file.Path,
+			Line:     typeInfo.Line,
+			Fix:      fmt.Sprintf("rename to %q (callers use %s.%s)", suggested, file.Package, suggested),
 		}
 	}
 
@@ -169,14 +172,14 @@ func checkPackageStutter(f *analyzer.FileInfo, t analyzer.TypeInfo) *report.Viol
 //
 // 나쁜 예: type UserServiceImpl struct{} ← 공개 + Impl 접미사
 // 좋은 예: type userService struct{}    ← 비공개 (소문자 시작)
-func checkImplSuffix(f *analyzer.FileInfo, t analyzer.TypeInfo) *report.Violation {
-	if strings.HasSuffix(t.Name, "Impl") {
+func checkImplSuffix(file *analyzer.FileInfo, typeInfo analyzer.TypeInfo) *report.Violation {
+	if strings.HasSuffix(typeInfo.Name, "Impl") {
 		return &report.Violation{
 			Rule:     "naming/impl-suffix",
 			Severity: report.Error,
-			Message:  fmt.Sprintf("type %q has forbidden 'Impl' suffix", t.Name),
-			File:     f.Path,
-			Line:     t.Line,
+			Message:  fmt.Sprintf("type %q has forbidden 'Impl' suffix", typeInfo.Name),
+			File:     file.Path,
+			Line:     typeInfo.Line,
 			Fix:      "use an unexported name for the implementation struct",
 		}
 	}
@@ -199,7 +202,7 @@ func checkImplSuffix(f *analyzer.FileInfo, t analyzer.TypeInfo) *report.Violatio
 //   - create_order.go → CreateOrder
 //
 // 예: svc/install.go 안에 Install 인터페이스가 없으면 위반.
-func checkFileInterfaceMatch(f *analyzer.FileInfo, dp *analyzer.DomainPath) *report.Violation {
+func checkFileInterfaceMatch(file *analyzer.FileInfo, dp *analyzer.DomainPath) *report.Violation {
 	// svc/와 repo/ 레이어에서만 적용
 	if dp.Layer != "svc" && dp.Layer != "repo" {
 		return nil
@@ -208,7 +211,7 @@ func checkFileInterfaceMatch(f *analyzer.FileInfo, dp *analyzer.DomainPath) *rep
 	// 파일에 공개 인터페이스가 하나도 없으면 검사하지 않음
 	// (struct만 있는 파일, 유틸리티 함수만 있는 파일 등)
 	hasExportedInterface := false
-	for _, t := range f.Types {
+	for _, t := range file.Types {
 		if t.IsInterface && t.IsExported {
 			hasExportedInterface = true
 			break
@@ -219,11 +222,11 @@ func checkFileInterfaceMatch(f *analyzer.FileInfo, dp *analyzer.DomainPath) *rep
 	}
 
 	// 파일명에서 기대하는 인터페이스명을 도출
-	baseName := strings.TrimSuffix(filepath.Base(f.Path), ".go")
+	baseName := strings.TrimSuffix(filepath.Base(file.Path), ".go")
 	expected := snakeToPascal(baseName)
 
 	// 파일 안에 기대하는 이름의 인터페이스가 있는지 확인
-	for _, t := range f.Types {
+	for _, t := range file.Types {
 		if t.IsInterface && t.IsExported && t.Name == expected {
 			return nil // 일치하는 인터페이스 발견
 		}
@@ -233,8 +236,8 @@ func checkFileInterfaceMatch(f *analyzer.FileInfo, dp *analyzer.DomainPath) *rep
 	return &report.Violation{
 		Rule:     "naming/file-interface-match",
 		Severity: report.Warning,
-		Message:  fmt.Sprintf("file %q should contain interface %q", filepath.Base(f.Path), expected),
-		File:     f.Path,
+		Message:  fmt.Sprintf("file %q should contain interface %q", filepath.Base(file.Path), expected),
+		File:     file.Path,
 		Fix:      fmt.Sprintf("rename file or interface so they match (e.g., %s.go → %s interface)", baseName, expected),
 	}
 }
@@ -274,19 +277,20 @@ func snakeToPascal(s string) string {
 //   - subdomain/core/svc/install.go
 //   - subdomain/core/model/user.go
 //   - subdomain/core/repo/user.go
-func checkLayerSuffixFilename(f *analyzer.FileInfo, dp *analyzer.DomainPath) *report.Violation {
-	baseName := strings.TrimSuffix(filepath.Base(f.Path), ".go")
+func checkLayerSuffixFilename(file *analyzer.FileInfo, _ *analyzer.DomainPath) *report.Violation {
+	baseName := strings.TrimSuffix(filepath.Base(file.Path), ".go")
 
 	// 각 레이어 이름을 접미사로 검사
 	for _, layer := range AllowedSubdomainLayers {
 		suffix := "_" + layer
-		if strings.HasSuffix(baseName, suffix) {
-			cleaned := strings.TrimSuffix(baseName, suffix)
+		// CutSuffix는 접미사가 있으면 제거한 문자열과 true를 반환한다.
+		// HasSuffix+TrimSuffix 조합보다 간결한 Go 1.20+ 스타일이다.
+		if cleaned, found := strings.CutSuffix(baseName, suffix); found {
 			return &report.Violation{
 				Rule:     "naming/layer-suffix-filename",
 				Severity: report.Error,
 				Message:  fmt.Sprintf("filename %q contains layer suffix %q", baseName+".go", suffix),
-				File:     f.Path,
+				File:     file.Path,
 				Fix:      fmt.Sprintf("rename to %q (directory already expresses the layer)", cleaned+".go"),
 			}
 		}
