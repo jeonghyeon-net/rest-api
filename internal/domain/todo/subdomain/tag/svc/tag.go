@@ -257,10 +257,10 @@ func (t *tag) ListByTodoIDs(ctx context.Context, todoIDs []int64) (map[int64][]m
 	// Go 슬라이스를 JSON 배열 문자열로 변환한다.
 	// json.Marshal은 []int64{1, 2, 3}을 "[1,2,3]" 바이트 슬라이스로 변환한다.
 	// 이 문자열이 SQLite json_each()의 입력이 된다.
-	idsJSON, err := json.Marshal(todoIDs)
-	if err != nil {
-		return nil, fmt.Errorf("todo ID JSON 변환 실패: %w", err)
-	}
+	//
+	// []int64는 JSON 기본 타입이므로 직렬화가 실패할 수 없다.
+	// json.Marshal은 채널(chan), 함수(func) 등 비직렬화 타입에서만 에러를 반환한다.
+	idsJSON, _ := json.Marshal(todoIDs) //nolint:errcheck // []int64는 직렬화 실패 불가능
 
 	rows, err := t.db.QueryContext(ctx, listTagsByTodoIDsQuery, string(idsJSON))
 	if err != nil {

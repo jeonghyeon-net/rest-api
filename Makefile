@@ -89,19 +89,21 @@ e2e:
 
 # 테스트 커버리지 리포트를 생성하고 브라우저에서 연다.
 # -tags=unit,e2e로 유닛+E2E 테스트를 한번에 실행하면서 커버리지를 측정한다.
-# -coverpkg로 internal/domain 패키지만 측정 대상으로 지정한다.
-# NestJS의 jest --coverage와 같은 역할이다.
+# -coverpkg로 internal/domain 패키지 중 직접 작성한 코드만 측정 대상으로 지정한다.
+# repo/ 패키지는 SQLC가 자동 생성한 코드이므로 커버리지 측정에서 제외한다.
+# NestJS의 jest --coverage + collectCoverageFrom 설정과 같은 역할이다.
 cover:
-	go test -tags=unit,e2e $$(go list ./... | grep -v test/architecture) -count=1 -coverpkg=$$(go list ./internal/domain/... | tr '\n' ',') -coverprofile=coverage.out 2>&1 | grep -v '\[no test'
+	go test -tags=unit,e2e $$(go list ./... | grep -v test/architecture) -count=1 -coverpkg=$$(go list ./internal/domain/... | grep -v '/repo' | tr '\n' ',') -coverprofile=coverage.out 2>&1 | grep -v '\[no test'
 	go tool cover -html=coverage.out -o coverage.html
 	open coverage.html
 
 # 테스트 커버리지가 100%인지 검증한다. (CI/훅용, 리포트 파일 생성 안 함)
 # -tags=unit,e2e로 유닛+E2E를 한번에 실행하여 커버리지를 측정한다.
+# repo/ 패키지는 SQLC 자동 생성 코드이므로 측정 대상에서 제외한다.
 # 전체 커버리지가 100.0%가 아니면 exit 1로 실패 처리한다.
 # pre-push 훅에서 호출되어 커버리지 미달 시 push를 차단한다.
 cover-check:
-	@go test -tags=unit,e2e $$(go list ./... | grep -v test/architecture) -count=1 -coverpkg=$$(go list ./internal/domain/... | tr '\n' ',') -coverprofile=coverage.out 2>&1 | grep -v '\[no test'
+	@go test -tags=unit,e2e $$(go list ./... | grep -v test/architecture) -count=1 -coverpkg=$$(go list ./internal/domain/... | grep -v '/repo' | tr '\n' ',') -coverprofile=coverage.out 2>&1 | grep -v '\[no test'
 	@TOTAL=$$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $$NF}'); \
 	echo "전체 커버리지: $$TOTAL"; \
 	if [ "$$TOTAL" != "100.0%" ]; then \

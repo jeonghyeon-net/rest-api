@@ -406,6 +406,32 @@ func (s *TodoE2ESuite) TestDuplicateTag() {
 	resp.Body.Close()
 }
 
+// TestUpdateTagDuplicateName은 태그 수정 시 중복된 이름으로 변경하면
+// 409 Conflict를 반환하는지 검증한다.
+// tag.svc.Update의 UNIQUE constraint 에러 분기를 커버한다.
+func (s *TodoE2ESuite) TestUpdateTagDuplicateName() {
+	// 태그 2개 생성
+	resp := s.doRequest(http.MethodPost, "/tags", s.jsonBody(map[string]string{
+		"name": "태그원본",
+	}))
+	s.Require().Equal(http.StatusCreated, resp.StatusCode)
+	resp.Body.Close()
+
+	resp = s.doRequest(http.MethodPost, "/tags", s.jsonBody(map[string]string{
+		"name": "태그대상",
+	}))
+	s.Require().Equal(http.StatusCreated, resp.StatusCode)
+
+	targetTag := decodeJSON[tagmodel.Tag](s, resp)
+
+	// 두 번째 태그의 이름을 첫 번째와 동일하게 수정 → 409 Conflict
+	resp = s.doRequest(http.MethodPatch, fmt.Sprintf("/tags/%d", targetTag.ID), s.jsonBody(map[string]string{
+		"name": "태그원본",
+	}))
+	s.Equal(http.StatusConflict, resp.StatusCode)
+	resp.Body.Close()
+}
+
 // TestValidationError는 필수 필드 누락 시 422를 반환하는지 검증한다.
 func (s *TodoE2ESuite) TestValidationError() {
 	// title 없이 Todo 생성 → 422 Unprocessable Entity

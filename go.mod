@@ -3,6 +3,7 @@ module rest-api
 go 1.26.0
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/bytedance/sonic v1.15.0
 	github.com/danielgtaylor/huma/v2 v2.37.2
 	github.com/go-playground/validator/v10 v10.30.1
